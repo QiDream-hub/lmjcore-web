@@ -1,6 +1,7 @@
 #include "../include/lmjcore_web.h"
 #include "../include/chain_query.h"
 #include "../include/http_server.h"
+#include "../include/ptr_generator.h"
 #include <json-c/json.h>
 #include <lmdb.h>
 #include <stdio.h>
@@ -38,14 +39,6 @@ static void handle_ptr_generate(http_request_t *req, http_response_t *res,
                                 void *ctx);
 static void handle_audit(http_request_t *req, http_response_t *res, void *ctx);
 static void handle_repair(http_request_t *req, http_response_t *res, void *ctx);
-
-// 工具函数
-static char *ptr_to_hex(const lmjcore_ptr ptr, char *buf, size_t buf_size) {
-  for (int i = 0; i < LMJCORE_PTR_LEN; i++) {
-    sprintf(buf + (i * 2), "%02x", ptr[i]);
-  }
-  return buf;
-}
 
 static int hex_to_ptr(const char *hex, lmjcore_ptr ptr) {
   size_t len = strlen(hex);
@@ -108,7 +101,7 @@ int lmjcore_web_init(const lmjcore_web_config_t *config) {
 
   // 初始化 LMJCore
   int rc = lmjcore_init(config->db_path, config->map_size, config->env_flags,
-                        NULL, NULL, &g_web.env);
+                        lmjcore_ptr_generator_uuid, NULL, &g_web.env);
   if (rc != LMJCORE_SUCCESS) {
     fprintf(stderr, "Failed to initialize LMJCore: %s\n", lmjcore_strerror(rc));
     return rc;
@@ -192,13 +185,15 @@ int lmjcore_web_generate_ptr(uint8_t type, char *out_hex, size_t out_size) {
     fclose(urandom);
   }
 
-  ptr_to_hex(ptr, out_hex, out_size);
+  lmjcore_ptr_to_string(ptr, out_hex, out_size);
   return LMJCORE_WEB_SUCCESS;
 }
 
 // 路由处理器实现
 static void handle_ptr_get(http_request_t *req, http_response_t *res,
                            void *ctx) {
+  (void)ctx;
+  (void)req;
   const char *path = http_request_path(req);
 
   // 解析路径: /ptr/01abc.../rest/of/path
@@ -279,7 +274,7 @@ static void handle_ptr_get(http_request_t *req, http_response_t *res,
               // 检查是否是指针
               if (value_len == LMJCORE_PTR_LEN) {
                 char ptr_str[LMJCORE_PTR_STRING_BUF_SIZE];
-                ptr_to_hex(value_buf, ptr_str, sizeof(ptr_str));
+                lmjcore_ptr_to_string(value_buf, ptr_str, sizeof(ptr_str));
                 json_object_object_add(member, "type",
                                        json_object_new_string("ptr"));
                 json_object_object_add(member, "ptr",
@@ -295,7 +290,8 @@ static void handle_ptr_get(http_request_t *req, http_response_t *res,
                                      json_object_new_string("missing"));
             }
 
-            json_object_array_add(members, member);  // 修复：使用 json_object_array_add
+            json_object_array_add(members,
+                                  member); // 修复：使用 json_object_array_add
           }
         }
         free(buf);
@@ -328,7 +324,7 @@ static void handle_ptr_get(http_request_t *req, http_response_t *res,
         break;
       case QUERY_RESULT_PTR: {
         char ptr_str[LMJCORE_PTR_STRING_BUF_SIZE];
-        ptr_to_hex(result.data, ptr_str, sizeof(ptr_str));
+        lmjcore_ptr_to_string(result.data, ptr_str, sizeof(ptr_str));
         json_object_object_add(data, "type", json_object_new_string("ptr"));
         json_object_object_add(data, "ptr", json_object_new_string(ptr_str));
         break;
@@ -353,6 +349,7 @@ static void handle_ptr_get(http_request_t *req, http_response_t *res,
 
 static void handle_ptr_put(http_request_t *req, http_response_t *res,
                            void *ctx) {
+  (void)ctx;
   const char *path = http_request_path(req);
 
   // 解析路径: /ptr/01abc.../member_name
@@ -434,6 +431,7 @@ static void handle_ptr_put(http_request_t *req, http_response_t *res,
 
 static void handle_ptr_delete(http_request_t *req, http_response_t *res,
                               void *ctx) {
+  (void)ctx;
   const char *path = http_request_path(req);
 
   if (strncmp(path, "/ptr/", 5) != 0) {
@@ -501,6 +499,7 @@ static void handle_ptr_delete(http_request_t *req, http_response_t *res,
 
 static void handle_obj_create(http_request_t *req, http_response_t *res,
                               void *ctx) {
+  (void)ctx;
   lmjcore_ptr ptr;
   lmjcore_txn *txn = get_write_txn();
 
@@ -517,7 +516,7 @@ static void handle_obj_create(http_request_t *req, http_response_t *res,
     rc = lmjcore_txn_commit(txn);
     if (rc == LMJCORE_SUCCESS) {
       char ptr_hex[LMJCORE_PTR_STRING_BUF_SIZE];
-      ptr_to_hex(ptr, ptr_hex, sizeof(ptr_hex));
+      lmjcore_ptr_to_string(ptr, ptr_hex, sizeof(ptr_hex));
 
       json_object *data = json_object_new_object();
       json_object_object_add(data, "ptr", json_object_new_string(ptr_hex));
@@ -534,6 +533,8 @@ static void handle_obj_create(http_request_t *req, http_response_t *res,
 
 static void handle_set_create(http_request_t *req, http_response_t *res,
                               void *ctx) {
+  (void)ctx;
+  (void)req;
   lmjcore_ptr ptr;
   lmjcore_txn *txn = get_write_txn();
 
@@ -550,7 +551,7 @@ static void handle_set_create(http_request_t *req, http_response_t *res,
     rc = lmjcore_txn_commit(txn);
     if (rc == LMJCORE_SUCCESS) {
       char ptr_hex[LMJCORE_PTR_STRING_BUF_SIZE];
-      ptr_to_hex(ptr, ptr_hex, sizeof(ptr_hex));
+      lmjcore_ptr_to_string(ptr, ptr_hex, sizeof(ptr_hex));
 
       json_object *data = json_object_new_object();
       json_object_object_add(data, "ptr", json_object_new_string(ptr_hex));
@@ -692,8 +693,9 @@ static void handle_set_all(http_request_t *req, http_response_t *res,
           size_t element_len = desc->value_len;
 
           json_object *elem_obj = json_object_new_object();
-          json_object_object_add(elem_obj, "value",
-                                 json_object_new_string_len(element, element_len));
+          json_object_object_add(
+              elem_obj, "value",
+              json_object_new_string_len(element, element_len));
           json_object_array_add(elements, elem_obj);
         }
       }
@@ -834,7 +836,7 @@ static void handle_audit(http_request_t *req, http_response_t *res, void *ctx) {
       for (size_t i = 0; i < report->audit_count; i++) {
         lmjcore_audit_descriptor *desc = &report->audit_descriptor[i];
         char ptr_str[LMJCORE_PTR_STRING_BUF_SIZE];
-        ptr_to_hex(desc->ptr, ptr_str, sizeof(ptr_str));
+        lmjcore_ptr_to_string(desc->ptr, ptr_str, sizeof(ptr_str));
 
         char *member_name =
             (char *)(buf + desc->member.member_name.value_offset);
@@ -851,10 +853,10 @@ static void handle_audit(http_request_t *req, http_response_t *res, void *ctx) {
 
     json_object_object_add(data, "ghost_members", ghosts);
     json_object_object_add(data, "missing_values", json_object_new_array());
-    json_object_object_add(data, "integrity",
-                           json_object_new_string(report && report->audit_count > 0
-                                                      ? "damaged"
-                                                      : "healthy"));
+    json_object_object_add(
+        data, "integrity",
+        json_object_new_string(report && report->audit_count > 0 ? "damaged"
+                                                                 : "healthy"));
 
     send_json_response(res, LMJCORE_WEB_SUCCESS, data);
     free(buf);

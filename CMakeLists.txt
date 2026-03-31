@@ -15,6 +15,7 @@ find_library(LMDB_LIBRARY NAMES lmdb)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBUV REQUIRED libuv)
 pkg_check_modules(LIBUUID REQUIRED uuid)
+pkg_check_modules(JSON_C REQUIRED json-c)    # 添加json-c查找
 
 # 头文件路径
 include_directories(
@@ -23,6 +24,7 @@ include_directories(
     ${LMDB_INCLUDE_DIR}
     ${LIBUV_INCLUDE_DIRS}
     ${LIBUUID_INCLUDE_DIRS}
+    ${JSON_C_INCLUDE_DIRS}                # 添加json-c头文件路径
 )
 
 # LMJCore 源文件
@@ -53,9 +55,10 @@ target_link_libraries(lmjcore-web
     ${LMDB_LIBRARY}
     ${LIBUV_LIBRARIES}
     ${LIBUUID_LIBRARIES}
+    ${JSON_C_LIBRARIES}    # 链接json-c库
     pthread
     rt
-    m                                               # 数学库，LMJCore可能需要
+    m                      # 数学库，LMJCore可能需要
 )
 
 # 如果 LMJCore 需要特定的编译选项
@@ -72,5 +75,4 @@ install(TARGETS lmjcore-web DESTINATION bin)
 # 可选：添加测试
 enable_testing()
 add_test(NAME test_client 
-         COMMAND ${CMAKE_COMMAND} -E echo "Run python tests/test_client.py"
-         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+         COMMAND ${CMAKE_COMMAND} -E echo "Run python tests/test_client.py")

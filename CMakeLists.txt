@@ -1,78 +1,80 @@
+// CMakeLists.txt
 cmake_minimum_required(VERSION 3.10)
-project(lmjcore-web VERSION 1.0.0)
+project(lmjcore_server VERSION 1.0.0 LANGUAGES C)
 
-set(CMAKE_C_STANDARD 99)
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -O2")
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
 
-# 设置 LMJCore 路径
-set(LMJCORE_PATH ${CMAKE_SOURCE_DIR}/thirdparty/LMJCore)
-set(LMJCORE_CORE_PATH ${LMJCORE_PATH}/core)
+# 编译选项
+if(CMAKE_C_COMPILER_ID STREQUAL "GNU" OR CMAKE_C_COMPILER_ID STREQUAL "Clang")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Werror -O2 -g")
+endif()
 
-# 依赖查找
-find_path(LMDB_INCLUDE_DIR NAMES lmdb.h)
-find_library(LMDB_LIBRARY NAMES lmdb)
+# 查找依赖
+find_path(LMDB_INCLUDE_DIR
+    NAMES lmdb.h
+    HINTS /usr/include /usr/local/include
+)
 
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(LIBUV REQUIRED libuv)
-pkg_check_modules(LIBUUID REQUIRED uuid)
-pkg_check_modules(JSON_C REQUIRED json-c)    # 添加json-c查找
+find_library(LMDB_LIBRARY
+    NAMES lmdb liblmdb
+    HINTS /usr/lib /usr/local/lib
+)
+
+if(NOT LMDB_INCLUDE_DIR OR NOT LMDB_LIBRARY)
+    message(FATAL_ERROR "LMDB not found. Please install lmdb development package.")
+endif()
+
+# 设置路径
+set(LMJCORE_SERVER_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include)
+set(LMJCORE_SERVER_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
+set(THIRDPARTY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty)
+
+# LMJCore 路径
+set(LMJCore_DIR ${THIRDPARTY_DIR}/LMJCore/core)
+set(LMJCore_INCLUDE_DIR ${LMJCore_DIR}/include)
+set(LMJCore_SRC_DIR ${LMJCore_DIR}/src)
+
+# URLRouter 路径
+set(URLRouter_DIR ${THIRDPARTY_DIR}/URLRouter)
+set(URLRouter_SRC ${URLRouter_DIR}/router.c)
+
+# 源文件
+set(SOURCES
+    ${LMJCORE_SERVER_SRC_DIR}/main.c
+    ${LMJCORE_SERVER_SRC_DIR}/routes.c
+    ${LMJCORE_SERVER_SRC_DIR}/http_server.c
+    ${LMJCORE_SERVER_SRC_DIR}/request_handlers.c
+    ${LMJCORE_SERVER_SRC_DIR}/utils.c
+    ${LMJCORE_SERVER_SRC_DIR}/path_parser.c
+    ${LMJCORE_SERVER_SRC_DIR}/value_codec.c
+    ${LMJCORE_SERVER_SRC_DIR}/json_builder.c
+    ${LMJCore_SRC_DIR}/lmjcore.c
+    ${URLRouter_SRC}
+)
 
 # 头文件路径
 include_directories(
-    ${CMAKE_SOURCE_DIR}/include
-    ${LMJCORE_CORE_PATH}/include          # LMJCore 主头文件
+    ${LMJCORE_SERVER_INCLUDE_DIR}
+    ${LMJCore_INCLUDE_DIR}
+    ${URLRouter_DIR}
     ${LMDB_INCLUDE_DIR}
-    ${LIBUV_INCLUDE_DIRS}
-    ${LIBUUID_INCLUDE_DIRS}
-    ${JSON_C_INCLUDE_DIRS}                # 添加json-c头文件路径
 )
 
-# LMJCore 源文件
-set(LMJCORE_SOURCES
-    ${LMJCORE_CORE_PATH}/src/lmjcore.c
-)
-
-# LMJCore Toolkit 源文件（可选，根据需要添加）
-set(LMJCORE_TOOLKIT_SOURCES
-    ${LMJCORE_PATH}/Toolkit/ptr_uuid_gen/src/lmjcore_uuid_gen.c
-    ${LMJCORE_PATH}/Toolkit/result_parser/src/result_parser.c
-)
-
-# 主项目源文件
-set(SOURCES
-    src/main.c
-    src/lmjcore_web.c
-    src/http_server.c
-    src/chain_query.c
-    src/ptr_generator.c
-)
-
-# 生成可执行文件
-add_executable(lmjcore-web ${SOURCES} ${LMJCORE_SOURCES} ${LMJCORE_TOOLKIT_SOURCES})
+# 可执行文件
+add_executable(lmjcore_server ${SOURCES})
 
 # 链接库
-target_link_libraries(lmjcore-web
+target_link_libraries(lmjcore_server
     ${LMDB_LIBRARY}
-    ${LIBUV_LIBRARIES}
-    ${LIBUUID_LIBRARIES}
-    ${JSON_C_LIBRARIES}    # 链接json-c库
     pthread
     rt
-    m                      # 数学库，LMJCore可能需要
+    m
 )
 
-# 如果 LMJCore 需要特定的编译选项
-target_compile_definitions(lmjcore-web PRIVATE
-    LMJCORE_BUILD
-)
+# 安装规则
+install(TARGETS lmjcore_server DESTINATION bin)
 
-# 可选：生成编译数据库（方便 IDE 和工具）
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
-# 安装
-install(TARGETS lmjcore-web DESTINATION bin)
-
-# 可选：添加测试
+# 测试
 enable_testing()
-add_test(NAME test_client 
-         COMMAND ${CMAKE_COMMAND} -E echo "Run python tests/test_client.py")
+add_subdirectory(tests)

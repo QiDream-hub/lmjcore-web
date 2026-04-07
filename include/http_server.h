@@ -2,9 +2,33 @@
 #ifndef LMJCORE_HTTP_SERVER_H
 #define LMJCORE_HTTP_SERVER_H
 
-#include "../include/lmjcore_server.h"
+#include "../include/lmjcore_handle.h"
+#include "../thirdparty/LMJCore/core/include/lmjcore.h"
 #include "../thirdparty/URLRouer/router.h"
 #include <stdbool.h>
+
+// ==================== HTTP 服务器配置 ====================
+
+typedef struct {
+  char *host;             // 监听地址（默认 "0.0.0.0"）
+  int port;               // 监听端口（默认 8080）
+  const char *db_path;    // LMDB 数据库路径
+  size_t map_size;        // 内存映射大小（默认 10MB = 10 * 1024 * 1024）
+  unsigned int env_flags; // 环境标志（默认安全模式 0）
+} server_config_t;
+
+// 默认配置
+#define SERVER_DEFAULT_HOST "0.0.0.0"
+#define SERVER_DEFAULT_PORT 8080
+#define SERVER_DEFAULT_MAP_SIZE (10 * 1024 * 1024) // 10MB
+
+// ==================== HTTP 服务器 ====================
+
+typedef struct {
+  server_config_t config;
+  lmjcore_env *env;
+  router_t *router;
+} http_server_t;
 
 // ==================== HTTP 请求结构 ====================
 
@@ -22,17 +46,6 @@ typedef struct {
   char *body;      // JSON 响应体
   size_t body_len; // 响应体长度
 } http_response_t;
-
-// ==================== 服务器内部结构 ====================
-
-typedef struct lmjcore_server {
-  int socket_fd;          // 监听 socket
-  server_config_t config; // 服务器配置
-  router_t *router;       // 路由实例
-  lmjcore_env *env;       // LMJCore 环境
-  volatile bool running;  // 运行状态标志
-  time_t start_time;      // 启动时间
-} lmjcore_server_t;
 
 // ==================== HTTP 解析函数 ====================
 
@@ -82,8 +95,6 @@ void http_free_response(http_response_t *response);
  * @param response 输出响应结构
  * @return int 错误码
  */
-int lmjcore_handle_request(lmjcore_server_t *server,
-                           const http_request_t *request,
+int lmjcore_handle_request(http_server_t *server, const http_request_t *request,
                            http_response_t *response);
-
 #endif // LMJCORE_HTTP_SERVER_H

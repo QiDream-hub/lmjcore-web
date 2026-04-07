@@ -262,14 +262,16 @@ void http_free_response(http_response_t *response) {
   }
 }
 
-int lmjcore_handle_request(lmjcore_server_t *server,
-                           const http_request_t *request,
-                           http_response_t *response) {
+int handle_request(http_server_t *server, const http_request_t *request,
+                   http_response_t *response) {
 
   route_params_t params;
   route_callback_t callback =
       router_match(server->router, request->method, request->url, &params);
 
-  handle_params param = {.params = &params, .env = server->env};
+  handle_params param = {.params = &params,
+                         .env = server->env,
+                         .body = request->body,
+                         .body_len = request->body_len};
   return callback(&param, response);
 }

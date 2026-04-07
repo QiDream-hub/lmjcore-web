@@ -1,38 +1,13 @@
-// include/lmjcore_server.h
-#ifndef LMJCORE_SERVER_H
-#define LMJCORE_SERVER_H
+// include/lmjcore_handle.h
+#ifndef LMJCORE_HANDLE_H
+#define LMJCORE_HANDLE_H
 
+#include "../thirdparty/LMJCore/core/include/lmjcore.h"
 #include "../thirdparty/URLRouer/router.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <time.h>
-
-// 前向声明
-typedef struct lmjcore_env lmjcore_env;
-typedef struct lmjcore_txn lmjcore_txn;
-
-// ==================== HTTP 服务器配置 ====================
-
-typedef struct {
-  char *host;               // 监听地址（默认 "0.0.0.0"）
-  int port;                 // 监听端口（默认 8080）
-  char *db_path;            // LMDB 数据库路径
-  size_t map_size;          // 内存映射大小（默认 10MB = 10 * 1024 * 1024）
-  unsigned int env_flags;   // 环境标志（默认安全模式 0）
-  unsigned int txn_timeout; // 事务超时秒数（默认 5）
-  size_t max_path_depth;    // 最大路径深度（默认 100）
-  bool enable_cache;        // 是否启用缓存（预留，默认 false）
-  int max_connections;      // 最大连接数（默认 100）
-} server_config_t;
-
-// 默认配置
-#define SERVER_DEFAULT_HOST "0.0.0.0"
-#define SERVER_DEFAULT_PORT 8080
-#define SERVER_DEFAULT_MAP_SIZE (10 * 1024 * 1024) // 10MB
-#define SERVER_DEFAULT_TXN_TIMEOUT 5
-#define SERVER_DEFAULT_MAX_PATH_DEPTH 100
-#define SERVER_DEFAULT_MAX_CONNECTIONS 100
 
 // ==================== 值类型定义 ====================
 
@@ -97,6 +72,8 @@ typedef struct {
 // 处理器参数
 typedef struct {
   route_params_t *params;
+  char *body;      // 请求体
+  size_t body_len; // 请求体长度
   lmjcore_env *env;
 } handle_params;
 
@@ -300,4 +277,4 @@ void lmjcore_free_set_response(set_response_t *response);
 void lmjcore_free_path_parse_result(char *start_ptr, char **segments,
                                     size_t segment_count);
 
-#endif // LMJCORE_SERVER_H
+#endif // LMJCORE_HANDLE_H

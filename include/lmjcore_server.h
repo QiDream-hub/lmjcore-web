@@ -94,74 +94,11 @@ typedef struct {
   char *ptr; // 新创建的实体指针
 } create_response_t;
 
-// ==================== 服务器实例 ====================
-
-typedef struct lmjcore_server lmjcore_server_t;
-
-// ==================== 初始化与清理 ====================
-
-/**
- * @brief 创建并初始化服务器
- *
- * @param config 服务器配置（可为 NULL，使用默认配置）
- * @param server_out 输出参数，返回服务器实例
- * @return int 错误码（0 表示成功）
- */
-int lmjcore_server_create(const server_config_t *config,
-                          lmjcore_server_t **server_out);
-
-/**
- * @brief 启动服务器（阻塞运行）
- *
- * @param server 服务器实例
- * @return int 错误码（0 表示成功）
- */
-int lmjcore_server_start(lmjcore_server_t *server);
-
-/**
- * @brief 停止服务器
- *
- * @param server 服务器实例
- * @return int 错误码（0 表示成功）
- */
-int lmjcore_server_stop(lmjcore_server_t *server);
-
-/**
- * @brief 销毁服务器并释放资源
- *
- * @param server 服务器实例
- * @return int 错误码（0 表示成功）
- */
-int lmjcore_server_destroy(lmjcore_server_t *server);
-
-// ==================== 响应处理函数 ====================
-
-/**
- * @brief 发送成功响应
- *
- * @param body 响应体（可为 NULL）
- * @param status_code HTTP 状态码
- * @return int 错误码
- */
-int lmjcore_send_response(const char *body, int status_code);
-
-/**
- * @brief 发送 JSON 响应
- *
- * @param json JSON 字符串
- * @param status_code HTTP 状态码
- * @return int 错误码
- */
-int lmjcore_send_json(const char *json, int status_code);
-
-/**
- * @brief 发送错误响应
- *
- * @param error_code 错误码
- * @param error_message 错误消息
- * @return int 错误码
- */
-int lmjcore_send_error(int error_code, const char *error_message);
+// 处理器参数
+typedef struct {
+  route_params_t *params;
+  lmjcore_env *env;
+} handle_params;
 
 // ==================== 对象处理器 ====================
 
@@ -171,21 +108,21 @@ int lmjcore_send_error(int error_code, const char *error_message);
  * 请求体: 无
  * 响应: {"ptr": "01abc123..."}
  */
-void handle_obj_create(route_params_t *params, void *cbdata);
+int handle_obj_create(void *params, void *cbdata);
 
 /**
  * @brief GET /obj/{ptr} - 获取完整对象
  *
  * 响应: {"ptr": "...", "members": [...], "count": N}
  */
-void handle_obj_get(route_params_t *params, void *cbdata);
+int handle_obj_get(void *params, void *cbdata);
 
 /**
  * @brief GET /obj/{ptr}/{member} - 获取成员值
  *
  * 响应: {"member": "name", "value": "...", "type": "raw|ref|null"}
  */
-void handle_obj_member_get(route_params_t *params, void *cbdata);
+int handle_obj_member_get(void *params, void *cbdata);
 
 /**
  * @brief PUT /obj/{ptr}/{member} - 设置成员值
@@ -193,14 +130,14 @@ void handle_obj_member_get(route_params_t *params, void *cbdata);
  * 请求体: {"value": "..."}
  * 响应: {"success": true}
  */
-void handle_obj_member_put(route_params_t *params, void *cbdata);
+int handle_obj_member_put(void *params, void *cbdata);
 
 /**
  * @brief DELETE /obj/{ptr}/{member} - 删除成员
  *
  * 响应: {"success": true}
  */
-void handle_obj_member_del(route_params_t *params, void *cbdata);
+int handle_obj_member_del(void *params, void *cbdata);
 
 /**
  * @brief GET /obj/query - 链式查询
@@ -208,7 +145,7 @@ void handle_obj_member_del(route_params_t *params, void *cbdata);
  * 查询参数: ?path=01abc123.user.profile.name
  * 响应: {"path": "...", "value": "...", "type": "raw|ref"}
  */
-void handle_obj_query(route_params_t *params, void *cbdata);
+int handle_obj_query(void *params, void *cbdata);
 
 // ==================== 集合处理器 ====================
 
@@ -217,14 +154,14 @@ void handle_obj_query(route_params_t *params, void *cbdata);
  *
  * 响应: {"ptr": "02def456..."}
  */
-void handle_set_create(route_params_t *params, void *cbdata);
+int handle_set_create(void *params, void *cbdata);
 
 /**
  * @brief GET /set/{ptr} - 获取完整集合
  *
  * 响应: {"ptr": "...", "elements": [...], "count": N}
  */
-void handle_set_get(route_params_t *params, void *cbdata);
+int handle_set_get(void *params, void *cbdata);
 
 /**
  * @brief POST /set/{ptr}/elements - 添加元素
@@ -232,7 +169,7 @@ void handle_set_get(route_params_t *params, void *cbdata);
  * 请求体: {"value": "..."}
  * 响应: {"success": true}
  */
-void handle_set_add(route_params_t *params, void *cbdata);
+int handle_set_add(void *params, void *cbdata);
 
 /**
  * @brief DELETE /set/{ptr}/elements - 删除元素
@@ -240,7 +177,7 @@ void handle_set_add(route_params_t *params, void *cbdata);
  * 请求体: {"value": "..."}
  * 响应: {"success": true}
  */
-void handle_set_remove(route_params_t *params, void *cbdata);
+int handle_set_remove(void *params, void *cbdata);
 
 // ==================== 工具处理器 ====================
 
@@ -249,14 +186,14 @@ void handle_set_remove(route_params_t *params, void *cbdata);
  *
  * 响应: {"exist": true, "type": "object|set"}
  */
-void handle_ptr_exist(route_params_t *params, void *cbdata);
+int handle_ptr_exist(void *params, void *cbdata);
 
 /**
  * @brief GET /health - 健康检查
  *
  * 响应: {"status": "ok", "uptime": 12345}
  */
-void handle_health(route_params_t *params, void *cbdata);
+int handle_health(void *params, void *cbdata);
 
 // ==================== 工具函数 ====================
 

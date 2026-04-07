@@ -25,14 +25,14 @@ typedef struct {
 
 // ==================== 服务器内部结构 ====================
 
-struct lmjcore_server {
+typedef struct lmjcore_server {
   int socket_fd;          // 监听 socket
   server_config_t config; // 服务器配置
   router_t *router;       // 路由实例
   lmjcore_env *env;       // LMJCore 环境
   volatile bool running;  // 运行状态标志
   time_t start_time;      // 启动时间
-};
+} lmjcore_server_t;
 
 // ==================== HTTP 解析函数 ====================
 

@@ -1,6 +1,6 @@
 // src/routes.c - 路由注册
 #include "../include/lmjcore_handle.h"
-#include "../thirdparty/URLRouer/router.h"
+#include "../include/routes.h"
 #include <stdio.h>
 
 /**

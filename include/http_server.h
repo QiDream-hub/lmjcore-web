@@ -1,100 +1,114 @@
-// src/http_server.h - HTTP 服务器内部接口
-#ifndef LMJCORE_HTTP_SERVER_H
-#define LMJCORE_HTTP_SERVER_H
+#ifndef HTTP_SERVER_H
+#define HTTP_SERVER_H
 
-#include "../include/lmjcore_handle.h"
 #include "../thirdparty/LMJCore/core/include/lmjcore.h"
 #include "../thirdparty/URLRouer/router.h"
+#include "http_parser.h"
 #include <stdbool.h>
+#include <stddef.h>
 
 // ==================== HTTP 服务器配置 ====================
 
 typedef struct {
-  char *host;             // 监听地址（默认 "0.0.0.0"）
-  int port;               // 监听端口（默认 8080）
-  const char *db_path;    // LMDB 数据库路径
-  size_t map_size;        // 内存映射大小（默认 10MB = 10 * 1024 * 1024）
+  char *host;          // 监听地址（默认 "0.0.0.0"）
+  int port;            // 监听端口（默认 8080）
+  const char *db_path; // LMDB 数据库路径
+  size_t map_size;     // 内存映射大小（默认 10MB = 10 * 1024 * 1024）
+  lmjcore_ptr_generator_fn fn; // LMJCore指针生成函数
   unsigned int env_flags; // 环境标志（默认安全模式 0）
+  int max_connections;    // 最大连接队列（默认 128）
 } server_config_t;
 
 // 默认配置
 #define SERVER_DEFAULT_HOST "0.0.0.0"
 #define SERVER_DEFAULT_PORT 8080
 #define SERVER_DEFAULT_MAP_SIZE (10 * 1024 * 1024) // 10MB
+#define SERVER_DEFAULT_MAX_CONNECTIONS 128
 
-// ==================== HTTP 服务器 ====================
+// ==================== 处理器参数结构 ====================
+
+/**
+ * @brief 传递给路由处理器的参数
+ *
+ * 这个结构体会被传递给 URLRouter 的 route_callback_t 函数
+ */
+typedef struct {
+  route_params_t *params; // URL 中提取的参数
+  lmjcore_env *env;       // LMDB 环境句柄
+  const char *body;       // 请求体（JSON 字符串）
+  size_t body_len;        // 请求体长度
+} handle_params_t;
+
+// ==================== HTTP 服务器结构 ====================
 
 typedef struct {
-  server_config_t config;
-  lmjcore_env *env;
-  router_t *router;
+  server_config_t config; // 服务器配置
+  lmjcore_env *env;       // LMDB 环境
+  router_t *router;       // URL 路由器
+  int listen_fd;          // 监听套接字
+  bool running;           // 运行状态标志
 } http_server_t;
 
-// ==================== HTTP 请求结构 ====================
-
-typedef struct {
-  http_method_t method; // HTTP 方法
-  char *url;            // URL
-  char *body;           // 请求体
-  size_t body_len;      // 请求体长度
-} http_request_t;
-
-// ==================== HTTP 响应结构 ====================
-
-typedef struct {
-  int status_code; // HTTP 状态码
-  char *body;      // JSON 响应体
-  size_t body_len; // 响应体长度
-} http_response_t;
-
-// ==================== HTTP 解析函数 ====================
+// ==================== 服务器生命周期函数 ====================
 
 /**
- * @brief 解析 HTTP 请求
+ * @brief 初始化 HTTP 服务器
  *
- * @param data 原始请求数据
- * @param data_len 数据长度
- * @param request_out 输出解析后的请求结构
- * @return int 错误码（0 表示成功）
+ * @param server 服务器实例指针
+ * @param config 服务器配置
+ * @return int 0 成功，-1 失败
  */
-int http_parse_request(const char *data, size_t data_len,
-                       http_request_t *request_out);
+int http_server_init(http_server_t *server, const server_config_t *config);
 
 /**
- * @brief 构建 HTTP 响应
+ * @brief 启动 HTTP 服务器（阻塞）
  *
- * @param response 响应结构
- * @param out_buf 输出缓冲区
- * @param out_buf_size 缓冲区大小
- * @return int 构建的响应长度，负数表示错误
+ * 开始监听端口并处理请求，每个连接会创建独立线程处理。
+ *
+ * @param server 服务器实例指针
+ * @return int 0 成功，-1 失败
  */
-int http_build_response(const http_response_t *response, char *out_buf,
-                        size_t out_buf_size);
+int http_server_start(http_server_t *server);
 
 /**
- * @brief 释放 HTTP 请求资源
+ * @brief 停止 HTTP 服务器
  *
- * @param request 请求结构
+ * 设置停止标志，等待当前连接处理完成后退出。
+ *
+ * @param server 服务器实例指针
  */
-void http_free_request(http_request_t *request);
+void http_server_stop(http_server_t *server);
 
 /**
- * @brief 释放 HTTP 响应资源
+ * @brief 销毁 HTTP 服务器，释放资源
  *
- * @param response 响应结构
+ * @param server 服务器实例指针
  */
-void http_free_response(http_response_t *response);
+void http_server_destroy(http_server_t *server);
 
-// ==================== 请求处理函数 ====================
+// ==================== 辅助函数 ====================
 
 /**
- * @brief 处理单个 HTTP 请求
+ * @brief 设置服务器路由器
  *
- * @param server 服务器实例
- * @param request 请求结构
- * @param response 输出响应结构
- * @return int 错误码
+ * @param server 服务器实例指针
+ * @param router 路由器实例（由调用者创建）
  */
-int lmjcore_handle_request(http_server_t *server, const http_request_t *request,
-                           http_response_t *response);
-#endif // LMJCORE_HTTP_SERVER_H
+static inline void http_server_set_router(http_server_t *server,
+                                          router_t *router) {
+  if (server && router) {
+    server->router = router;
+  }
+}
+
+/**
+ * @brief 获取服务器 LMDB 环境句柄
+ *
+ * @param server 服务器实例指针
+ * @return lmjcore_env* 环境句柄
+ */
+static inline lmjcore_env *http_server_get_env(http_server_t *server) {
+  return server ? server->env : NULL;
+}
+
+#endif // HTTP_SERVER_H

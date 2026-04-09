@@ -1,277 +1,524 @@
 #include "../include/http_server.h"
-#include "../thirdparty/URLRouer/router.h"
-#include <stddef.h>
+#include "../thirdparty/LMJCore/core/include/lmjcore.h"
+#include <errno.h>
+#include <pthread.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
-// ==================== 辅助函数实现 ====================
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+typedef SOCKET socket_t;
+#define SOCKET_ERROR_VAL SOCKET_ERROR
+#define CLOSE_SOCKET closesocket
+#define THREAD_RETURN_TYPE DWORD WINAPI
+#else
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <sys/socket.h>
+typedef int socket_t;
+#define SOCKET_ERROR_VAL -1
+#define CLOSE_SOCKET close
+#define THREAD_RETURN_TYPE void *
+#endif
 
-// 辅助函数：查找头部结束位置（空行）
-static const char *find_headers_end(const char *data, size_t data_len) {
-  for (size_t i = 0; i + 3 < data_len; i++) {
-    // 标准 HTTP 换行符 \r\n\r\n
-    if (data[i] == '\r' && data[i + 1] == '\n' && data[i + 2] == '\r' &&
-        data[i + 3] == '\n') {
-      return data + i + 4;
-    }
-    // 宽容处理：仅 \n\n
-    if (data[i] == '\n' && data[i + 1] == '\n') {
-      return data + i + 2;
-    }
-  }
-  return NULL;
+// ==================== 线程参数结构 ====================
+
+typedef struct {
+  http_server_t *server;
+  socket_t client_fd;
+  struct sockaddr_in client_addr;
+} thread_args_t;
+
+// ==================== 内部辅助函数 ====================
+
+/**
+ * @brief 获取当前时间戳字符串（用于日志）
+ */
+static void get_timestamp(char *buffer, size_t size) {
+  time_t now = time(NULL);
+  struct tm *tm_info = localtime(&now);
+  strftime(buffer, size, "%Y-%m-%d %H:%M:%S", tm_info);
 }
 
-// 辅助函数：字符串到 HTTP 方法枚举
-static int str_to_http_method(const char *method_str, http_method_t *method) {
-  if (strcmp(method_str, "GET") == 0)
-    *method = HTTP_GET;
-  else if (strcmp(method_str, "POST") == 0)
-    *method = HTTP_POST;
-  else if (strcmp(method_str, "PUT") == 0)
-    *method = HTTP_PUT;
-  else if (strcmp(method_str, "DELETE") == 0)
-    *method = HTTP_DELETE;
-  else if (strcmp(method_str, "PATCH") == 0)
-    *method = HTTP_PATCH;
-  else if (strcmp(method_str, "HEAD") == 0)
-    *method = HTTP_HEAD;
-  else if (strcmp(method_str, "OPTIONS") == 0)
-    *method = HTTP_OPTIONS;
-  else
-    return -1; // 不支持的方法
+/**
+ * @brief 日志输出
+ */
+static void log_request(const char *method, const char *url, int status_code,
+                        const char *client_ip) {
+  char timestamp[64];
+  get_timestamp(timestamp, sizeof(timestamp));
+  printf("[%s] %s - %s %s -> %d\n", timestamp, client_ip, method, url,
+         status_code);
+}
+
+/**
+ * @brief 设置套接字为非阻塞模式（可选）
+ */
+static int set_socket_nonblocking(socket_t fd) {
+#ifdef _WIN32
+  u_long mode = 1;
+  return ioctlsocket(fd, FIONBIO, &mode);
+#else
+  int flags = fcntl(fd, F_GETFL, 0);
+  if (flags == -1)
+    return -1;
+  return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+#endif
+}
+
+/**
+ * @brief 设置套接字选项
+ */
+static int set_socket_options(socket_t fd) {
+  int opt = 1;
+
+  // 设置地址重用
+  if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR,
+#ifdef _WIN32
+                 (const char *)&opt, sizeof(opt)) < 0) {
+#else
+                 &opt, sizeof(opt)) < 0) {
+#endif
+    perror("setsockopt SO_REUSEADDR");
+    return -1;
+  }
+
+  // 设置 TCP_NODELAY（禁用 Nagle 算法，提高小包响应速度）
+#ifdef _WIN32
+  if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (const char *)&opt,
+                 sizeof(opt)) < 0) {
+#else
+  if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt)) < 0) {
+#endif
+    perror("setsockopt TCP_NODELAY");
+    // 非致命错误，继续执行
+  }
+
   return 0;
 }
 
 /**
- * @brief 获取 HTTP 状态码对应的描述文本
+ * @brief 读取 HTTP 请求
  */
-static const char *get_status_text(int status_code) {
-  switch (status_code) {
-  case 200:
-    return "OK";
-  case 201:
-    return "Created";
-  case 204:
-    return "No Content";
-  case 400:
-    return "Bad Request";
-  case 404:
-    return "Not Found";
-  case 405:
-    return "Method Not Allowed";
-  case 408:
-    return "Request Timeout";
-  case 500:
-    return "Internal Server Error";
-  default:
-    return "Unknown";
-  }
-}
+static int read_http_request(socket_t client_fd, char *buffer,
+                             size_t buffer_size) {
+  // 使用 recv 读取数据
+  ssize_t bytes_read = recv(client_fd, buffer, buffer_size - 1, 0);
 
-// 辅助函数：安全地复制字符串
-static char *safe_strdup(const char *s) {
-  if (!s)
-    return NULL;
-  return strdup(s);
+  if (bytes_read <= 0) {
+    return -1;
+  }
+
+  buffer[bytes_read] = '\0';
+  return bytes_read;
 }
 
 /**
- * 在数据缓冲区中查找指定的字节序列
+ * @brief 发送 HTTP 响应
  */
-static char *find_key_offset(const char *data, size_t data_len,
-                             size_t start_offset, const char *target_key,
-                             size_t target_key_len) {
-  if (!data || !target_key || data_len == 0 || target_key_len == 0) {
-    return NULL;
+static int send_http_response(socket_t client_fd, const char *response,
+                              size_t response_len) {
+  ssize_t total_sent = 0;
+
+  while (total_sent < (ssize_t)response_len) {
+    ssize_t sent =
+        send(client_fd, response + total_sent, response_len - total_sent, 0);
+    if (sent < 0) {
+      if (errno == EINTR)
+        continue; // 被信号中断，重试
+      return -1;
+    }
+    total_sent += sent;
   }
 
-  if (start_offset >= data_len || target_key_len > data_len - start_offset) {
-    return NULL;
-  }
+  return total_sent;
+}
 
-  for (size_t i = start_offset; i <= data_len - target_key_len; i++) {
-    if (data[i] == target_key[0]) {
-      if (memcmp(data + i, target_key, target_key_len) == 0) {
-        return (char *)(data + i);
+/**
+ * @brief 处理 400 错误响应
+ */
+static void send_error_response(socket_t client_fd, int status_code,
+                                const char *message) {
+  http_response_t response = {
+      .status_code = status_code, .body = NULL, .body_len = 0};
+
+  // 构建 JSON 错误消息
+  char json_body[256];
+  snprintf(json_body, sizeof(json_body), "{\"error\":\"%s\"}", message);
+  response.body = json_body;
+  response.body_len = strlen(json_body);
+
+  // 构建 HTTP 响应
+  char response_buf[8192];
+  int response_len =
+      http_build_response(&response, response_buf, sizeof(response_buf));
+
+  if (response_len > 0) {
+    send_http_response(client_fd, response_buf, response_len);
+  }
+}
+
+/**
+ * @brief 线程函数：处理单个 HTTP 连接
+ */
+#ifdef _WIN32
+static THREAD_RETURN_TYPE handle_connection_thread(LPVOID arg) {
+#else
+static THREAD_RETURN_TYPE handle_connection_thread(void *arg) {
+#endif
+  thread_args_t *args = (thread_args_t *)arg;
+  http_server_t *server = args->server;
+  socket_t client_fd = args->client_fd;
+
+  // 获取客户端 IP 地址
+  char client_ip[INET_ADDRSTRLEN];
+  inet_ntop(AF_INET, &(args->client_addr.sin_addr), client_ip,
+            sizeof(client_ip));
+
+  // 设置套接字选项
+  set_socket_options(client_fd);
+
+  // 读取请求缓冲区
+  char request_buffer[16384] = {0};
+  int bytes_read =
+      read_http_request(client_fd, request_buffer, sizeof(request_buffer));
+
+  http_response_t response = {0};
+  const char *method_str = "UNKNOWN";
+  const char *url_str = "/";
+
+  if (bytes_read > 0) {
+    // 1. 解析 HTTP 请求
+    http_request_t request = {0};
+
+    if (http_parse_request(request_buffer, bytes_read, &request) == 0) {
+      method_str = (request.method == HTTP_GET)       ? "GET"
+                   : (request.method == HTTP_POST)    ? "POST"
+                   : (request.method == HTTP_PUT)     ? "PUT"
+                   : (request.method == HTTP_DELETE)  ? "DELETE"
+                   : (request.method == HTTP_PATCH)   ? "PATCH"
+                   : (request.method == HTTP_HEAD)    ? "HEAD"
+                   : (request.method == HTTP_OPTIONS) ? "OPTIONS"
+                                                      : "UNKNOWN";
+      url_str = request.url ? request.url : "/";
+
+      // 2. 路由匹配
+      if (server->router) {
+        route_params_t params = {0};
+        route_callback_t handler =
+            router_match(server->router, request.method, request.url, &params);
+
+        // 3. 调用处理器
+        if (handler) {
+          handle_params_t h_params = {.params = &params,
+                                      .env = server->env,
+                                      .body = request.body,
+                                      .body_len = request.body_len};
+
+          // 调用由 lmjcore_handle 实现的函数
+          int handler_result = handler(&h_params, &response);
+
+          if (handler_result != 0) {
+            // 处理器返回错误，如果没有设置响应体，则设置默认错误
+            if (response.body == NULL) {
+              response.status_code = 500;
+              response.body = strdup("{\"error\":\"Internal Server Error\"}");
+              response.body_len = strlen(response.body);
+            }
+          }
+
+          // 释放路由参数
+          route_params_free(&params);
+        } else {
+          // 404 Not Found
+          response.status_code = 404;
+          response.body = strdup("{\"error\":\"Not Found\"}");
+          response.body_len = strlen(response.body);
+        }
+      } else {
+        // 路由器未初始化
+        response.status_code = 500;
+        response.body = strdup("{\"error\":\"Router not configured\"}");
+        response.body_len = strlen(response.body);
       }
+
+      // 释放请求资源
+      http_free_request(&request);
+    } else {
+      // 400 Bad Request - 解析失败
+      response.status_code = 400;
+      response.body = strdup("{\"error\":\"Bad Request\"}");
+      response.body_len = strlen(response.body);
     }
-  }
-  return NULL;
-}
-
-// 复用通用定义查找空格
-static char *find_space_offset(const char *data, size_t data_len,
-                               size_t start_offset) {
-  const char target_key = ' ';
-  return find_key_offset(data, data_len, start_offset, &target_key, 1);
-}
-
-// ==================== 核心解析与构建函数 ====================
-
-int http_parse_request(const char *data, size_t data_len,
-                       http_request_t *request_out) {
-  if (!data || data_len == 0 || !request_out)
-    return -1;
-
-  memset(request_out, 0, sizeof(http_request_t));
-
-  // 分配临时缓冲区
-  char *buffer = (char *)malloc(data_len + 1);
-  if (!buffer)
-    return -1;
-
-  memcpy(buffer, data, data_len);
-  buffer[data_len] = '\0';
-
-  // --- 解析首行 ---
-  char *space1 = find_space_offset(buffer, data_len, 0);
-  if (!space1)
-    goto cleanup_error;
-
-  *space1 = '\0';
-  char *method_str = buffer;
-
-  char *space2 = find_space_offset(buffer, data_len, space1 - buffer + 1);
-  if (!space2)
-    goto cleanup_error;
-
-  *space2 = '\0';
-  char *url_str = space1 + 1;
-
-  // 查找行尾
-  char *line_end =
-      find_key_offset(buffer, data_len, space2 - buffer + 1, "\r", 1);
-  if (!line_end) {
-    line_end = find_key_offset(buffer, data_len, space2 - buffer + 1, "\n", 1);
-  }
-
-  if (line_end) {
-    *line_end = '\0';
-  }
-  char *version_str = space2 + 1;
-
-  // --- 数据验证与转换 ---
-  if (!method_str || !url_str || !version_str) {
-    goto cleanup_error;
-  }
-
-  if (str_to_http_method(method_str, &request_out->method) != 0) {
-    goto cleanup_error;
-  }
-
-  request_out->url = safe_strdup(url_str);
-  if (!request_out->url)
-    goto cleanup_error;
-
-  // --- 解析请求体 ---
-  const char *body_start = find_headers_end(data, data_len);
-
-  if (body_start) {
-    size_t body_size = data_len - (body_start - data);
-    if (body_size > 0) {
-      request_out->body = (char *)malloc(body_size);
-      if (!request_out->body) {
-        goto cleanup_error;
-      }
-      memcpy(request_out->body, body_start, body_size);
-      request_out->body_len = body_size;
-    }
-  }
-
-  free(buffer);
-  return 0;
-
-cleanup_error:
-  if (request_out->url)
-    free(request_out->url);
-  if (request_out->body)
-    free(request_out->body);
-  free(buffer);
-  memset(request_out, 0, sizeof(http_request_t));
-  return -1;
-}
-
-int http_build_response(const http_response_t *response, char *out_buf,
-                        size_t out_buf_size) {
-  if (!response || !out_buf || out_buf_size == 0) {
-    return -1;
-  }
-
-  // 检查是否需要 Body
-  if (response->status_code >= 200 && response->status_code < 300) {
-    if (!response->body && response->status_code != 204) {
-      return -3;
-    }
-  }
-
-  const char *status_text = get_status_text(response->status_code);
-  int written = 0;
-
-  if (response->body && response->body_len > 0) {
-    written = snprintf(out_buf, out_buf_size,
-                       "HTTP/1.1 %d %s\r\n"
-                       "Content-Type: application/json\r\n"
-                       "Content-Length: %zu\r\n"
-                       "Connection: close\r\n"
-                       "\r\n"
-                       "%.*s",
-                       response->status_code, status_text, response->body_len,
-                       (int)response->body_len, response->body);
   } else {
-    written = snprintf(out_buf, out_buf_size,
-                       "HTTP/1.1 %d %s\r\n"
-                       "Content-Length: 0\r\n"
-                       "Connection: close\r\n"
-                       "\r\n",
-                       response->status_code, status_text);
+    // 读取请求失败
+    response.status_code = 400;
+    response.body = strdup("{\"error\":\"Failed to read request\"}");
+    response.body_len = strlen(response.body);
   }
 
-  if (written < 0 || (size_t)written >= out_buf_size) {
-    return -2;
+  // 确保响应状态码已设置
+  if (response.status_code == 0) {
+    response.status_code = 200;
   }
 
-  return written;
+  // 4. 构建 HTTP 响应
+  char response_buf[32768]; // 32KB 缓冲区
+  int response_len =
+      http_build_response(&response, response_buf, sizeof(response_buf));
+
+  if (response_len > 0) {
+    // 5. 发送响应
+    send_http_response(client_fd, response_buf, response_len);
+
+    // 记录日志
+    log_request(method_str, url_str, response.status_code, client_ip);
+  } else {
+    // 构建响应失败，发送简单错误响应
+    const char *fallback = "HTTP/1.1 500 Internal Server Error\r\n"
+                           "Content-Length: 0\r\n"
+                           "Connection: close\r\n\r\n";
+    send_http_response(client_fd, fallback, strlen(fallback));
+  }
+
+  // 6. 清理资源
+  http_free_response(&response);
+  CLOSE_SOCKET(client_fd);
+  free(args);
+
+#ifdef _WIN32
+  return 0;
+#else
+  return NULL;
+#endif
 }
 
-// ==================== 资源释放函数 ====================
+// ==================== 服务器生命周期实现 ====================
 
-void http_free_request(http_request_t *request) {
-  if (request) {
-    if (request->url) {
-      free(request->url);
-      request->url = NULL;
+int http_server_init(http_server_t *server, const server_config_t *config) {
+  if (!server || !config) {
+    return -1;
+  }
+
+  memset(server, 0, sizeof(http_server_t));
+
+  // 复制配置
+  server->config = *config;
+  if (!server->config.host) {
+    server->config.host = strdup(SERVER_DEFAULT_HOST);
+  } else {
+    server->config.host = strdup(config->host);
+  }
+
+  if (server->config.port <= 0) {
+    server->config.port = SERVER_DEFAULT_PORT;
+  }
+
+  if (server->config.map_size == 0) {
+    server->config.map_size = SERVER_DEFAULT_MAP_SIZE;
+  }
+
+  if (server->config.max_connections <= 0) {
+    server->config.max_connections = SERVER_DEFAULT_MAX_CONNECTIONS;
+  }
+
+  // 初始化 LMDB 环境
+  if (server->config.db_path) {
+    int rc = lmjcore_init(server->config.db_path, server->config.map_size,
+                          server->config.env_flags, server->config.fn, NULL,
+                          &server->env);
+    if (rc != 0) {
+      fprintf(stderr, "Failed to create LMDB environment at %s\n",
+              server->config.db_path);
+      free(server->config.host);
+      return -1;
     }
-    if (request->body) {
-      free(request->body);
-      request->body = NULL;
+  }
+
+  server->listen_fd = SOCKET_ERROR_VAL;
+  server->running = false;
+  server->router = NULL;
+
+#ifdef _WIN32
+  // Windows 需要初始化 Winsock
+  WSADATA wsa_data;
+  if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0) {
+    fprintf(stderr, "WSAStartup failed\n");
+    lmjcore_env_close(server->env);
+    free(server->config.host);
+    return -1;
+  }
+#endif
+
+  return 0;
+}
+
+int http_server_start(http_server_t *server) {
+  if (!server) {
+    return -1;
+  }
+
+  // 创建套接字
+  server->listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+  if (server->listen_fd == SOCKET_ERROR_VAL) {
+    perror("socket");
+    return -1;
+  }
+
+  // 设置套接字选项
+  if (set_socket_options(server->listen_fd) < 0) {
+    CLOSE_SOCKET(server->listen_fd);
+    return -1;
+  }
+
+  // 绑定地址
+  struct sockaddr_in addr;
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(server->config.port);
+
+  if (strcmp(server->config.host, "0.0.0.0") == 0) {
+    addr.sin_addr.s_addr = INADDR_ANY;
+  } else {
+    if (inet_pton(AF_INET, server->config.host, &addr.sin_addr) <= 0) {
+      fprintf(stderr, "Invalid host address: %s\n", server->config.host);
+      CLOSE_SOCKET(server->listen_fd);
+      return -1;
     }
-    request->body_len = 0;
-    request->method = 0;
+  }
+
+  if (bind(server->listen_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+    perror("bind");
+    CLOSE_SOCKET(server->listen_fd);
+    return -1;
+  }
+
+  // 监听
+  if (listen(server->listen_fd, server->config.max_connections) < 0) {
+    perror("listen");
+    CLOSE_SOCKET(server->listen_fd);
+    return -1;
+  }
+
+  printf("LMJCore HTTP Server started on %s:%d\n", server->config.host,
+         server->config.port);
+  printf("Database path: %s\n",
+         server->config.db_path ? server->config.db_path : "(none)");
+  printf("Press Ctrl+C to stop\n");
+
+  // 设置运行标志
+  server->running = true;
+
+  // 忽略 SIGPIPE 信号（防止向已关闭的套接字写入时崩溃）
+#ifndef _WIN32
+  signal(SIGPIPE, SIG_IGN);
+#endif
+
+  // 主循环
+  while (server->running) {
+    struct sockaddr_in client_addr;
+    socklen_t client_len = sizeof(client_addr);
+
+    socket_t client_fd =
+        accept(server->listen_fd, (struct sockaddr *)&client_addr, &client_len);
+
+    if (client_fd == SOCKET_ERROR_VAL) {
+      if (server->running) {
+        perror("accept");
+      }
+      continue;
+    }
+
+    // 创建线程参数
+    thread_args_t *args = (thread_args_t *)malloc(sizeof(thread_args_t));
+    if (!args) {
+      fprintf(stderr, "Failed to allocate thread args\n");
+      CLOSE_SOCKET(client_fd);
+      continue;
+    }
+
+    args->server = server;
+    args->client_fd = client_fd;
+    args->client_addr = client_addr;
+
+    // 创建线程处理连接
+#ifdef _WIN32
+    HANDLE thread =
+        CreateThread(NULL, 0, handle_connection_thread, args, 0, NULL);
+    if (thread) {
+      CloseHandle(thread);
+    } else {
+      fprintf(stderr, "Failed to create thread\n");
+      CLOSE_SOCKET(client_fd);
+      free(args);
+    }
+#else
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, handle_connection_thread, args) != 0) {
+      perror("pthread_create");
+      CLOSE_SOCKET(client_fd);
+      free(args);
+    } else {
+      pthread_detach(thread); // 分离线程，自动回收资源
+    }
+#endif
+  }
+
+  // 关闭监听套接字
+  CLOSE_SOCKET(server->listen_fd);
+  server->listen_fd = SOCKET_ERROR_VAL;
+
+  return 0;
+}
+
+void http_server_stop(http_server_t *server) {
+  if (!server) {
+    return;
+  }
+
+  printf("Stopping server...\n");
+  server->running = false;
+
+  // 关闭监听套接字以中断 accept
+  if (server->listen_fd != SOCKET_ERROR_VAL) {
+    CLOSE_SOCKET(server->listen_fd);
+    server->listen_fd = SOCKET_ERROR_VAL;
   }
 }
 
-void http_free_response(http_response_t *response) {
-  if (response) {
-    free(response->body);
-    response->body = NULL;
-    response->body_len = 0;
-    response->status_code = 0;
+void http_server_destroy(http_server_t *server) {
+  if (!server) {
+    return;
   }
-}
 
-int handle_request(http_server_t *server, const http_request_t *request,
-                   http_response_t *response) {
+  // 停止服务器
+  http_server_stop(server);
 
-  route_params_t params;
-  route_callback_t callback =
-      router_match(server->router, request->method, request->url, &params);
+  // 释放配置中的动态分配内存
+  if (server->config.host) {
+    free(server->config.host);
+    server->config.host = NULL;
+  }
 
-  handle_params param = {.params = &params,
-                         .env = server->env,
-                         .body = request->body,
-                         .body_len = request->body_len};
-  return callback(&param, response);
+  // 关闭 LMDB 环境
+  if (server->env) {
+    lmjcore_cleanup(server->env);
+    server->env = NULL;
+  }
+
+  // 注意：router 由调用者管理，这里不释放
+
+#ifdef _WIN32
+  WSACleanup();
+#endif
+
+  printf("Server destroyed\n");
 }

@@ -213,11 +213,11 @@ static THREAD_RETURN_TYPE handle_connection_thread(void *arg) {
       // 2. 路由匹配
       if (server->router) {
         route_params_t params = {0};
-        route_callback_t handler =
-            router_match(server->router, request.method, request.url, &params);
-
+        route_node_t *node =
+            router_match(server->router, request.method, request.url);
+        route_callback_t handler = router_get_callback(node);
         // 3. 调用处理器
-        if (handler) {
+        if (node && handler) {
           handle_params_t h_params = {.params = &params,
                                       .env = server->env,
                                       .body = request.body,
@@ -235,8 +235,6 @@ static THREAD_RETURN_TYPE handle_connection_thread(void *arg) {
             }
           }
 
-          // 释放路由参数
-          route_params_free(&params);
         } else {
           // 404 Not Found
           response.status_code = 404;

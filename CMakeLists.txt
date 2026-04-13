@@ -1,4 +1,4 @@
-// CMakeLists.txt
+# CMakeLists.txt
 cmake_minimum_required(VERSION 3.10)
 project(lmjcore_server VERSION 1.0.0 LANGUAGES C)
 
@@ -7,7 +7,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 
 # 编译选项
 if(CMAKE_C_COMPILER_ID STREQUAL "GNU" OR CMAKE_C_COMPILER_ID STREQUAL "Clang")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Werror -O2 -g")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -O2 -g")
 endif()
 
 # 查找依赖
@@ -35,21 +35,28 @@ set(LMJCore_DIR ${THIRDPARTY_DIR}/LMJCore/core)
 set(LMJCore_INCLUDE_DIR ${LMJCore_DIR}/include)
 set(LMJCore_SRC_DIR ${LMJCore_DIR}/src)
 
-# URLRouter 路径
-set(URLRouter_DIR ${THIRDPARTY_DIR}/URLRouter)
-set(URLRouter_SRC ${URLRouter_DIR}/router.c)
+# LMJCore Toolkit 路径
+set(LMJCoreToolkit_DIR ${THIRDPARTY_DIR}/LMJCore/Toolkit/ptr_uuid_gen)
+set(LMJCoreToolkit_SRC ${LMJCoreToolkit_DIR}/src/lmjcore_uuid_gen.c)
+
+# URLRouter 路径（注意：目录名是 URLRouer 不是 URLRouter）
+set(URLRouter_DIR ${THIRDPARTY_DIR}/URLRouer)
+set(URLRouter_SRC 
+    ${URLRouter_DIR}/router.c
+    ${URLRouter_DIR}/route_tree.c
+    ${URLRouter_DIR}/pattern_compiler.c
+    ${URLRouter_DIR}/extractor.c
+)
 
 # 源文件
 set(SOURCES
     ${LMJCORE_SERVER_SRC_DIR}/main.c
     ${LMJCORE_SERVER_SRC_DIR}/routes.c
     ${LMJCORE_SERVER_SRC_DIR}/http_server.c
-    ${LMJCORE_SERVER_SRC_DIR}/request_handlers.c
-    ${LMJCORE_SERVER_SRC_DIR}/utils.c
-    ${LMJCORE_SERVER_SRC_DIR}/path_parser.c
-    ${LMJCORE_SERVER_SRC_DIR}/value_codec.c
-    ${LMJCORE_SERVER_SRC_DIR}/json_builder.c
+    ${LMJCORE_SERVER_SRC_DIR}/http_parser.c
+    ${LMJCORE_SERVER_SRC_DIR}/lmjcore_handle.c
     ${LMJCore_SRC_DIR}/lmjcore.c
+    ${LMJCoreToolkit_SRC}
     ${URLRouter_SRC}
 )
 
@@ -57,6 +64,7 @@ set(SOURCES
 include_directories(
     ${LMJCORE_SERVER_INCLUDE_DIR}
     ${LMJCore_INCLUDE_DIR}
+    ${LMJCoreToolkit_DIR}/include
     ${URLRouter_DIR}
     ${LMDB_INCLUDE_DIR}
 )

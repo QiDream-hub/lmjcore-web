@@ -4,6 +4,7 @@
 #include "../thirdparty/LMJCore/core/include/lmjcore.h"
 #include "../thirdparty/URLRouter/include/router.h"
 #include "http_parser.h"
+#include "lmjcore_handle.h"
 #include <stdbool.h>
 #include <stddef.h>
 
@@ -24,20 +25,6 @@ typedef struct {
 #define SERVER_DEFAULT_PORT 8080
 #define SERVER_DEFAULT_MAP_SIZE (10 * 1024 * 1024) // 10MB
 #define SERVER_DEFAULT_MAX_CONNECTIONS 128
-
-// ==================== 处理器参数结构 ====================
-
-/**
- * @brief 传递给路由处理器的参数
- *
- * 这个结构体会被传递给 URLRouter 的 route_callback_t 函数
- */
-typedef struct {
-  route_params_t *params; // URL 中提取的参数
-  lmjcore_env *env;       // LMDB 环境句柄
-  const char *body;       // 请求体（JSON 字符串）
-  size_t body_len;        // 请求体长度
-} handle_params_t;
 
 // ==================== HTTP 服务器结构 ====================
 

@@ -192,13 +192,12 @@ static THREAD_RETURN_TYPE handle_connection_thread(void *arg) {
       read_http_request(client_fd, request_buffer, sizeof(request_buffer));
 
   http_response_t response = {0};
+  http_request_t request = {0};
   const char *method_str = "UNKNOWN";
   const char *url_str = "/";
 
   if (bytes_read > 0) {
     // 1. 解析 HTTP 请求
-    http_request_t request = {0};
-
     if (http_parse_request(request_buffer, bytes_read, &request) == 0) {
       method_str = (request.method == HTTP_GET)       ? "GET"
                    : (request.method == HTTP_POST)    ? "POST"
@@ -247,9 +246,6 @@ static THREAD_RETURN_TYPE handle_connection_thread(void *arg) {
         response.body = strdup("{\"error\":\"Router not configured\"}");
         response.body_len = strlen(response.body);
       }
-
-      // 释放请求资源
-      http_free_request(&request);
     } else {
       // 400 Bad Request - 解析失败
       response.status_code = 400;
@@ -285,10 +281,14 @@ static THREAD_RETURN_TYPE handle_connection_thread(void *arg) {
                            "Content-Length: 0\r\n"
                            "Connection: close\r\n\r\n";
     send_http_response(client_fd, fallback, strlen(fallback));
+
+    // 记录日志
+    log_request(method_str, url_str, response.status_code, client_ip);
   }
 
   // 6. 清理资源
   http_free_response(&response);
+  http_free_request(&request);
   CLOSE_SOCKET(client_fd);
   free(args);
 

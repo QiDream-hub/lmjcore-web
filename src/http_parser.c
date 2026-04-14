@@ -78,9 +78,8 @@ static char *safe_strdup(const char *s) {
 /**
  * 在数据缓冲区中查找指定的字节序列
  */
-static char *find_key_offset(const char *data, size_t data_len,
-                             size_t start_offset, const char *target_key,
-                             size_t target_key_len) {
+static char *find_key_offset(char *data, size_t data_len, size_t start_offset,
+                             const char *target_key, size_t target_key_len) {
   if (!data || !target_key || data_len == 0 || target_key_len == 0) {
     return NULL;
   }
@@ -92,7 +91,7 @@ static char *find_key_offset(const char *data, size_t data_len,
   for (size_t i = start_offset; i <= data_len - target_key_len; i++) {
     if (data[i] == target_key[0]) {
       if (memcmp(data + i, target_key, target_key_len) == 0) {
-        return (char *)(data + i);
+        return data + i;
       }
     }
   }
@@ -100,7 +99,7 @@ static char *find_key_offset(const char *data, size_t data_len,
 }
 
 // 复用通用定义查找空格
-static char *find_space_offset(const char *data, size_t data_len,
+static char *find_space_offset(char *data, size_t data_len,
                                size_t start_offset) {
   const char target_key = ' ';
   return find_key_offset(data, data_len, start_offset, &target_key, 1);
@@ -138,11 +137,15 @@ int http_parse_request(const char *data, size_t data_len,
   *space2 = '\0';
   char *url_str = space1 + 1;
 
-  // 查找行尾
-  char *line_end =
-      find_key_offset(buffer, data_len, space2 - buffer + 1, "\r", 1);
-  if (!line_end) {
-    line_end = find_key_offset(buffer, data_len, space2 - buffer + 1, "\n", 1);
+  // 查找行尾（HTTP 版本字符串结束位置）
+  // 只在剩余数据中查找第一个\r 或\n，避免误匹配请求体中的换行符
+  char *line_end = NULL;
+  size_t version_start = space2 - buffer + 1;
+  for (size_t i = version_start; i < data_len; i++) {
+    if (buffer[i] == '\r' || buffer[i] == '\n') {
+      line_end = buffer + i;
+      break;
+    }
   }
 
   if (line_end) {
@@ -164,19 +167,23 @@ int http_parse_request(const char *data, size_t data_len,
     goto cleanup_error;
 
   // --- 解析请求体 ---
-  const char *body_start = find_headers_end(data, data_len);
+  // 在 buffer 中查找 headers 结束位置（空行 \r\n\r\n 或 \n\n）
+  const char *body_start = find_headers_end(buffer, data_len);
 
   if (body_start) {
-    size_t body_size = data_len - (body_start - data);
+    size_t body_size = data_len - (body_start - buffer);
     if (body_size > 0) {
-      request_out->body = (char *)malloc(body_size);
+      request_out->body = (char *)malloc(body_size + 1);
       if (!request_out->body) {
         goto cleanup_error;
       }
       memcpy(request_out->body, body_start, body_size);
+      request_out->body[body_size] = '\0';
       request_out->body_len = body_size;
     }
   }
+
+  // --- 解析头部（简单实现：暂不存储）---
 
   free(buffer);
   return 0;

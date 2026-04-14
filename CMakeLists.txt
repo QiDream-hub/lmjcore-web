@@ -63,7 +63,10 @@ set(SERVER_SOURCES
     ${SERVER_SRC_DIR}/routes.c
     ${SERVER_SRC_DIR}/http_server.c
     ${SERVER_SRC_DIR}/http_parser.c
-    ${SERVER_SRC_DIR}/lmjcore_handle.c
+    ${SERVER_SRC_DIR}/handlers/obj_handle.c
+    ${SERVER_SRC_DIR}/handlers/set_handle.c
+    ${SERVER_SRC_DIR}/handlers/utils_handle.c
+    ${SERVER_SRC_DIR}/handlers/handle_utils.c
 )
 
 # 4.2 LMJCore 核心源文件
@@ -99,6 +102,16 @@ set(ALL_SOURCES
 # 5. 构建可执行文件
 # -----------------------------------------------------------
 add_executable(lmjcore_server ${ALL_SOURCES})
+
+# 添加头文件搜索路径
+target_include_directories(lmjcore_server PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/handlers
+    ${LMDB_INCLUDE_DIR}
+    ${THIRDPARTY_DIR}/LMJCore/core/include
+    ${THIRDPARTY_DIR}/LMJCore/Toolkit/ptr_uuid_gen/include
+    ${THIRDPARTY_DIR}/URLRouter/include
+)
 
 # -----------------------------------------------------------
 # 6. 链接库 (重点修改这里)

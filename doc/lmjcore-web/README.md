@@ -48,7 +48,7 @@ lmjcore-web/
 │   └── httpServer.c        # HTTP 服务器测试
 └── thirdparty/             # 第三方依赖
     ├── LMJCore/            # LMJCore 核心库
-    └── URLRouer/           # URL 路由库
+    └── URLRouter/           # URL 路由库
 ```
 
 ---
@@ -224,7 +224,7 @@ GET /obj/query?path=01abc123.user.profile.name
 - **编译器**: GCC 或 Clang (支持 C11)
 - **LMDB**: 需安装开发包
 - **LMJCore**: 位于 `thirdparty/LMJCore/core`
-- **URLRouter**: 位于 `thirdparty/URLRouer`
+- **URLRouter**: 位于 `thirdparty/URLRouter`
 
 ### 7.2 编译步骤
 

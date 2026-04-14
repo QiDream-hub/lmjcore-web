@@ -1,6 +1,6 @@
 [submodule "thirdparty/LMJCore"]
 	path = thirdparty/LMJCore
 	url = git@github.com:QiDream-hub/LMJCore.git
-[submodule "thirdparty/URLRouer"]
-	path = thirdparty/URLRouer
+[submodule "thirdparty/URLRouter"]
+	path = thirdparty/URLRouter
 	url = git@github.com:QiDream-hub/URLRouter.git

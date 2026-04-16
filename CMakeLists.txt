@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 project(lmjcore_server VERSION 1.0.0 LANGUAGES C)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON) 
 
 # -----------------------------------------------------------
 # 1. 全局配置
@@ -113,6 +114,8 @@ target_include_directories(lmjcore_server PRIVATE
     ${THIRDPARTY_DIR}/URLRouter/include
 )
 
+# 添加 llhttp 头文件路径（系统库，位于/usr/include）
+
 # -----------------------------------------------------------
 # 6. 链接库 (重点修改这里)
 # -----------------------------------------------------------
@@ -121,7 +124,10 @@ target_link_libraries(lmjcore_server
     # 注意：确保 ${LMDB_LIBRARY} 解析出来的是 /usr/lib/liblmdb.so
     ${LMDB_LIBRARY}
 
-    # 2. 再链接系统库
+    # 2. llhttp HTTP 解析库
+    llhttp
+
+    # 3. 再链接系统库
     # pthread, rt, m 等系统库通常放在后面
     pthread
     rt

@@ -4,6 +4,3 @@
 [submodule "thirdparty/URLRouter"]
 	path = thirdparty/URLRouter
 	url = git@github.com:QiDream-hub/URLRouter.git
-[submodule "thirdparty/llhttp"]
-	path = thirdparty/llhttp
-	url = git@github.com:nodejs/llhttp.git

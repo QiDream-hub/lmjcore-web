@@ -217,6 +217,8 @@ int http_build_response(const http_response_t *response, char *out_buf,
   if (response->body && response->body_len > 0) {
     written = snprintf(out_buf, out_buf_size,
                        "HTTP/1.1 %d %s\r\n"
+                       "Access-Control-Allow-Origin: *\r\n"          // 允许所有来源
+                       "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n" // 允许的方法
                        "Content-Type: application/json\r\n"
                        "Content-Length: %zu\r\n"
                        "Connection: close\r\n"
@@ -227,6 +229,8 @@ int http_build_response(const http_response_t *response, char *out_buf,
   } else {
     written = snprintf(out_buf, out_buf_size,
                        "HTTP/1.1 %d %s\r\n"
+                       "Access-Control-Allow-Origin: *\r\n"          // 允许所有来源
+                       "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n" // 允许的方法
                        "Content-Length: 0\r\n"
                        "Connection: close\r\n"
                        "\r\n",

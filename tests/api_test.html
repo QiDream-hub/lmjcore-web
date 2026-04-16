@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LMJCore-Web API 测试工具</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #007bff;
+        }
+
+        .config-section {
+            background: #fff;
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .config-section label {
+            margin-right: 10px;
+            font-weight: 600;
+        }
+
+        .config-section input {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 250px;
+            font-size: 14px;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+
+        .tab-btn {
+            padding: 10px 20px;
+            background: #e9ecef;
+            border: none;
+            border-radius: 6px 6px 0 0;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .tab-btn:hover {
+            background: #dee2e6;
+        }
+
+        .tab-btn.active {
+            background: #007bff;
+            color: #fff;
+        }
+
+        .tab-content {
+            display: none;
+            background: #fff;
+            padding: 20px;
+            border-radius: 0 8px 8px 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .api-section {
+            margin-bottom: 25px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .api-section:last-child {
+            border-bottom: none;
+        }
+
+        .api-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .api-method {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 700;
+            margin-right: 8px;
+        }
+
+        .method-post {
+            background: #28a745;
+            color: #fff;
+        }
+
+        .method-get {
+            background: #007bff;
+            color: #fff;
+        }
+
+        .method-put {
+            background: #ffc107;
+            color: #333;
+        }
+
+        .method-delete {
+            background: #dc3545;
+            color: #fff;
+        }
+
+        .api-path {
+            font-family: 'Monaco', 'Consolas', monospace;
+            background: #f8f9fa;
+            padding: 8px 12px;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            font-size: 13px;
+        }
+
+        .form-group {
+            margin-bottom: 12px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 13px;
+            color: #555;
+            font-weight: 500;
+        }
+
+        .form-group input,
+        .form-group textarea {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            font-family: 'Monaco', 'Consolas', monospace;
+        }
+
+        .form-group textarea {
+            min-height: 80px;
+            resize: vertical;
+        }
+
+        .form-row {
+            display: flex;
+            gap: 15px;
+        }
+
+        .form-row .form-group {
+            flex: 1;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: #007bff;
+            color: #fff;
+        }
+
+        .btn-primary:hover {
+            background: #0056b3;
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: #fff;
+        }
+
+        .btn-secondary:hover {
+            background: #545b62;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .response-box {
+            margin-top: 15px;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: 'Monaco', 'Consolas', monospace;
+            font-size: 13px;
+            white-space: pre-wrap;
+            word-break: break-all;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .response-box.error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .response-box.success {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-line {
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+
+        .status-line .status-code {
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 3px;
+        }
+
+        .status-ok {
+            background: #28a745;
+            color: #fff;
+        }
+
+        .status-error {
+            background: #dc3545;
+            color: #fff;
+        }
+
+        .saved-info {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            padding: 10px 15px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+
+        .saved-info code {
+            background: #fff;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+
+        .hint {
+            font-size: 12px;
+            color: #888;
+            margin-top: 4px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>🔧 LMJCore-Web API 测试工具</h1>
+
+        <div class="config-section">
+            <label for="baseUrl">服务器地址:</label>
+            <input type="text" id="baseUrl" value="http://localhost:8080" placeholder="http://localhost:8080">
+            <span class="hint">输入 LMJCore-Web 服务器的地址</span>
+        </div>
+
+        <div class="saved-info" id="savedInfo" style="display: none;">
+            <strong>💾 已保存的指针:</strong>
+            对象：<code id="savedObjPtr">-</code> |
+            集合：<code id="savedSetPtr">-</code>
+        </div>
+
+        <div class="tabs">
+            <button class="tab-btn active" data-tab="obj">对象操作</button>
+            <button class="tab-btn" data-tab="set">集合操作</button>
+            <button class="tab-btn" data-tab="utils">工具接口</button>
+        </div>
+
+        <!-- 对象操作 Tab -->
+        <div class="tab-content active" id="obj-tab">
+            <div class="api-section">
+                <div class="api-title">1. 创建对象</div>
+                <div class="api-path"><span class="api-method method-post">POST</span>/obj</div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="createObject()">创建对象</button>
+                    <button class="btn btn-secondary" onclick="savePtr('obj')">保存指针</button>
+                </div>
+                <div class="response-box" id="createObjResponse" style="display: none;"></div>
+            </div>
+
+            <div class="api-section">
+                <div class="api-title">2. 获取完整对象</div>
+                <div class="api-path"><span class="api-method method-get">GET</span>/obj/{ptr}</div>
+                <div class="form-group">
+                    <label>对象指针 (ptr):</label>
+                    <input type="text" id="getObjPtr" placeholder="01abc123...">
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="getObject()">获取对象</button>
+                    <button class="btn btn-secondary" onclick="useSavedPtr('obj', 'getObjPtr')">使用保存的指针</button>
+                </div>
+                <div class="response-box" id="getObjResponse" style="display: none;"></div>
+            </div>
+
+            <div class="api-section">
+                <div class="api-title">3. 设置成员值</div>
+                <div class="api-path"><span class="api-method method-put">PUT</span>/obj/{ptr}/{member}</div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>对象指针 (ptr):</label>
+                        <input type="text" id="setMemberPtr" placeholder="01abc123...">
+                    </div>
+                    <div class="form-group">
+                        <label>成员名 (member):</label>
+                        <input type="text" id="setMemberName" placeholder="例如：username">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>成员值 (value):</label>
+                    <input type="text" id="setMemberValue" placeholder="可以是字符串或指针">
+                    <div class="hint">支持：原始数据、指针引用 (01/02 开头 34 位十六进制)、null</div>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="setMember()">设置成员值</button>
+                    <button class="btn btn-secondary" onclick="useSavedPtr('obj', 'setMemberPtr')">使用保存的指针</button>
+                </div>
+                <div class="response-box" id="setMemberResponse" style="display: none;"></div>
+            </div>
+
+            <div class="api-section">
+                <div class="api-title">4. 获取成员值</div>
+                <div class="api-path"><span class="api-method method-get">GET</span>/obj/{ptr}/{member}</div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>对象指针 (ptr):</label>
+                        <input type="text" id="getMemberPtr" placeholder="01abc123...">
+                    </div>
+                    <div class="form-group">
+                        <label>成员名 (member):</label>
+                        <input type="text" id="getMemberName" placeholder="例如：username">
+                    </div>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="getMember()">获取成员值</button>
+                    <button class="btn btn-secondary" onclick="useSavedPtr('obj', 'getMemberPtr')">使用保存的指针</button>
+                </div>
+                <div class="response-box" id="getMemberResponse" style="display: none;"></div>
+            </div>
+
+            <div class="api-section">
+                <div class="api-title">5. 删除成员</div>
+                <div class="api-path"><span class="api-method method-delete">DELETE</span>/obj/{ptr}/{member}</div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>对象指针 (ptr):</label>
+                        <input type="text" id="delMemberPtr" placeholder="01abc123...">
+                    </div>
+                    <div class="form-group">
+                        <label>成员名 (member):</label>
+                        <input type="text" id="delMemberName" placeholder="例如：username">
+                    </div>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="deleteMember()">删除成员</button>
+                    <button class="btn btn-secondary" onclick="useSavedPtr('obj', 'delMemberPtr')">使用保存的指针</button>
+                </div>
+                <div class="response-box" id="delMemberResponse" style="display: none;"></div>
+            </div>
+
+            <div class="api-section">
+                <div class="api-title">6. 链式查询</div>
+                <div class="api-path"><span class="api-method method-get">GET</span>/obj/query?path={path}</div>
+                <div class="form-group">
+                    <label>查询路径 (path):</label>
+                    <input type="text" id="queryPath" placeholder="01abc123.user.profile.name">
+                    <div class="hint">格式：&lt;指针&gt;.&lt;member1&gt;.&lt;member2&gt;...</div>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="queryPath()">执行查询</button>
+                    <button class="btn btn-secondary" onclick="useSavedPtr('obj', 'queryPath', true)">使用保存的指针</button>
+                </div>
+                <div class="response-box" id="queryResponse" style="display: none;"></div>
+            </div>
+        </div>
+
+        <!-- 集合操作 Tab -->
+        <div class="tab-content" id="set-tab">
+            <div class="api-section">
+                <div class="api-title">7. 创建集合</div>
+                <div class="api-path"><span class="api-method method-post">POST</span>/set</div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="createSet()">创建集合</button>
+                    <button class="btn btn-secondary" onclick="savePtr('set')">保存指针</button>
+                </div>
+                <div class="response-box" id="createSetResponse" style="display: none;"></div>
+            </div>
+
+            <div class="api-section">
+                <div class="api-title">8. 获取完整集合</div>
+                <div class="api-path"><span class="api-method method-get">GET</span>/set/{ptr}</div>
+                <div class="form-group">
+                    <label>集合指针 (ptr):</label>
+                    <input type="text" id="getSetPtr" placeholder="02def456...">
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="getSet()">获取集合</button>
+                    <button class="btn btn-secondary" onclick="useSavedPtr('set', 'getSetPtr')">使用保存的指针</button>
+                </div>
+                <div class="response-box" id="getSetResponse" style="display: none;"></div>
+            </div>
+
+            <div class="api-section">
+                <div class="api-title">9. 添加元素</div>
+                <div class="api-path"><span class="api-method method-post">POST</span>/set/{ptr}/elements</div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>集合指针 (ptr):</label>
+                        <input type="text" id="addElementPtr" placeholder="02def456...">
+                    </div>
+                    <div class="form-group">
+                        <label>元素值 (value):</label>
+                        <input type="text" id="addElementValue" placeholder="例如：apple">
+                    </div>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="addElement()">添加元素</button>
+                    <button class="btn btn-secondary" onclick="useSavedPtr('set', 'addElementPtr')">使用保存的指针</button>
+                </div>
+                <div class="response-box" id="addElementResponse" style="display: none;"></div>
+            </div>
+
+            <div class="api-section">
+                <div class="api-title">10. 删除元素</div>
+                <div class="api-path"><span class="api-method method-delete">DELETE</span>/set/{ptr}/elements</div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>集合指针 (ptr):</label>
+                        <input type="text" id="removeElementPtr" placeholder="02def456...">
+                    </div>
+                    <div class="form-group">
+                        <label>元素值 (value):</label>
+                        <input type="text" id="removeElementValue" placeholder="例如：apple">
+                    </div>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="removeElement()">删除元素</button>
+                    <button class="btn btn-secondary" onclick="useSavedPtr('set', 'removeElementPtr')">使用保存的指针</button>
+                </div>
+                <div class="response-box" id="removeElementResponse" style="display: none;"></div>
+            </div>
+        </div>
+
+        <!-- 工具接口 Tab -->
+        <div class="tab-content" id="utils-tab">
+            <div class="api-section">
+                <div class="api-title">11. 检查指针是否存在</div>
+                <div class="api-path"><span class="api-method method-get">GET</span>/ptr/{ptr}/exist</div>
+                <div class="form-group">
+                    <label>指针 (ptr):</label>
+                    <input type="text" id="checkPtr" placeholder="01abc123... 或 02def456...">
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="checkPtrExist()">检查存在</button>
+                    <button class="btn btn-secondary" onclick="useSavedPtr('obj', 'checkPtr')">使用保存的对象指针</button>
+                    <button class="btn btn-secondary" onclick="useSavedPtr('set', 'checkPtr')">使用保存的集合指针</button>
+                </div>
+                <div class="response-box" id="checkPtrResponse" style="display: none;"></div>
+            </div>
+
+            <div class="api-section">
+                <div class="api-title">12. 健康检查</div>
+                <div class="api-path"><span class="api-method method-get">GET</span>/health</div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="healthCheck()">健康检查</button>
+                </div>
+                <div class="response-box" id="healthResponse" style="display: none;"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 保存的指针
+        let savedPtrs = {
+            obj: '',
+            set: ''
+        };
+
+        // Tab 切换
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                btn.classList.add('active');
+                document.getElementById(btn.dataset.tab + '-tab').classList.add('active');
+            });
+        });
+
+        // 获取基础 URL
+        function getBaseUrl() {
+            return document.getElementById('baseUrl').value.replace(/\/$/, '');
+        }
+
+        // 显示响应
+        function showResponse(elementId, status, statusText, data, isError = false) {
+            const box = document.getElementById(elementId);
+            box.style.display = 'block';
+            box.className = 'response-box ' + (isError ? 'error' : 'success');
+
+            const statusClass = isError ? 'status-error' : 'status-ok';
+            let output = `<div class="status-line">HTTP 状态：<span class="status-code ${statusClass}">${status} ${statusText}</span></div>\n`;
+
+            if (typeof data === 'object') {
+                output += JSON.stringify(data, null, 2);
+            } else {
+                output += data;
+            }
+            box.innerHTML = output;
+        }
+
+        // 保存指针
+        function savePtr(type) {
+            let ptr;
+            if (type === 'obj') {
+                ptr = document.getElementById('createObjPtr')?.value ||
+                    JSON.parse(document.getElementById('createObjResponse')?.textContent || '{}')?.ptr;
+            } else {
+                ptr = document.getElementById('createSetPtr')?.value ||
+                    JSON.parse(document.getElementById('createSetResponse')?.textContent || '{}')?.ptr;
+            }
+
+            if (ptr) {
+                savedPtrs[type] = ptr;
+                updateSavedInfo();
+                alert(`已保存${type === 'obj' ? '对象' : '集合'}指针：${ptr}`);
+            } else {
+                alert('未找到可用的指针，请先创建或手动输入');
+            }
+        }
+
+        // 更新保存信息显示
+        function updateSavedInfo() {
+            const infoBox = document.getElementById('savedInfo');
+            if (savedPtrs.obj || savedPtrs.set) {
+                infoBox.style.display = 'block';
+                document.getElementById('savedObjPtr').textContent = savedPtrs.obj || '-';
+                document.getElementById('savedSetPtr').textContent = savedPtrs.set || '-';
+            }
+        }
+
+        // 使用保存的指针
+        function useSavedPtr(type, inputId, isPath = false) {
+            const ptr = savedPtrs[type];
+            const input = document.getElementById(inputId);
+            if (ptr) {
+                if (isPath) {
+                    input.value = ptr + '.member1.member2';
+                } else {
+                    input.value = ptr;
+                }
+            } else {
+                alert(`尚未保存${type === 'obj' ? '对象' : '集合'}指针，请先创建并保存`);
+            }
+        }
+
+        // API 请求函数
+        async function apiRequest(url, method = 'GET', body = null) {
+            const options = {
+                method,
+                headers: {
+                    // 'Content-Type': 'application/json'
+                    'Content-Type': 'text/plain'
+                }
+            };
+            if (body) {
+                options.body = JSON.stringify(body);
+            }
+            const response = await fetch(url, options);
+            const data = await response.json();
+            return {
+                status: response.status,
+                statusText: response.statusText,
+                data
+            };
+        }
+
+        // 1. 创建对象
+        async function createObject() {
+            try {
+                const result = await apiRequest(getBaseUrl() + '/obj', 'POST');
+                console.log(result);
+                showResponse('createObjResponse', result.status, result.statusText, result.data);
+                if (result.status === 201 && result.data.ptr) {
+                    document.getElementById('createObjPtr').value = result.data.ptr;
+                }
+            } catch (err) {
+                showResponse('createObjResponse', 0, err.message, { error: err.message }, true);
+            }
+        }
+
+        // 2. 获取完整对象
+        async function getObject() {
+            const ptr = document.getElementById('getObjPtr').value.trim();
+            if (!ptr) {
+                alert('请输入对象指针');
+                return;
+            }
+            try {
+                const result = await apiRequest(getBaseUrl() + '/obj/' + ptr, 'GET');
+                showResponse('getObjResponse', result.status, result.statusText, result.data, result.status !== 200);
+            } catch (err) {
+                showResponse('getObjResponse', 0, err.message, { error: err.message }, true);
+            }
+        }
+
+        // 3. 设置成员值
+        async function setMember() {
+            const ptr = document.getElementById('setMemberPtr').value.trim();
+            const member = document.getElementById('setMemberName').value.trim();
+            const value = document.getElementById('setMemberValue').value;
+
+            if (!ptr || !member) {
+                alert('请输入对象指针和成员名');
+                return;
+            }
+            try {
+                const result = await apiRequest(
+                    getBaseUrl() + '/obj/' + ptr + '/' + member,
+                    'PUT',
+                    { value: value || null }
+                );
+                showResponse('setMemberResponse', result.status, result.statusText, result.data, result.status !== 200);
+            } catch (err) {
+                showResponse('setMemberResponse', 0, err.message, { error: err.message }, true);
+            }
+        }
+
+        // 4. 获取成员值
+        async function getMember() {
+            const ptr = document.getElementById('getMemberPtr').value.trim();
+            const member = document.getElementById('getMemberName').value.trim();
+
+            if (!ptr || !member) {
+                alert('请输入对象指针和成员名');
+                return;
+            }
+            try {
+                const result = await apiRequest(getBaseUrl() + '/obj/' + ptr + '/' + member, 'GET');
+                showResponse('getMemberResponse', result.status, result.statusText, result.data, result.status !== 200);
+            } catch (err) {
+                showResponse('getMemberResponse', 0, err.message, { error: err.message }, true);
+            }
+        }
+
+        // 5. 删除成员
+        async function deleteMember() {
+            const ptr = document.getElementById('delMemberPtr').value.trim();
+            const member = document.getElementById('delMemberName').value.trim();
+
+            if (!ptr || !member) {
+                alert('请输入对象指针和成员名');
+                return;
+            }
+            try {
+                const result = await apiRequest(getBaseUrl() + '/obj/' + ptr + '/' + member, 'DELETE');
+                showResponse('delMemberResponse', result.status, result.statusText, result.data, result.status !== 200);
+            } catch (err) {
+                showResponse('delMemberResponse', 0, err.message, { error: err.message }, true);
+            }
+        }
+
+        // 6. 链式查询
+        async function queryPath() {
+            const path = document.getElementById('queryPath').value.trim();
+            if (!path) {
+                alert('请输入查询路径');
+                return;
+            }
+            try {
+                const result = await apiRequest(
+                    getBaseUrl() + '/obj/query?path=' + encodeURIComponent(path),
+                    'GET'
+                );
+                showResponse('queryResponse', result.status, result.statusText, result.data, result.status !== 200);
+            } catch (err) {
+                showResponse('queryResponse', 0, err.message, { error: err.message }, true);
+            }
+        }
+
+        // 7. 创建集合
+        async function createSet() {
+            try {
+                const result = await apiRequest(getBaseUrl() + '/set', 'POST');
+                showResponse('createSetResponse', result.status, result.statusText, result.data);
+                if (result.status === 201 && result.data.ptr) {
+                    document.getElementById('createSetPtr').value = result.data.ptr;
+                }
+            } catch (err) {
+                showResponse('createSetResponse', 0, err.message, { error: err.message }, true);
+            }
+        }
+
+        // 8. 获取完整集合
+        async function getSet() {
+            const ptr = document.getElementById('getSetPtr').value.trim();
+            if (!ptr) {
+                alert('请输入集合指针');
+                return;
+            }
+            try {
+                const result = await apiRequest(getBaseUrl() + '/set/' + ptr, 'GET');
+                showResponse('getSetResponse', result.status, result.statusText, result.data, result.status !== 200);
+            } catch (err) {
+                showResponse('getSetResponse', 0, err.message, { error: err.message }, true);
+            }
+        }
+
+        // 9. 添加元素
+        async function addElement() {
+            const ptr = document.getElementById('addElementPtr').value.trim();
+            const value = document.getElementById('addElementValue').value.trim();
+
+            if (!ptr || !value) {
+                alert('请输入集合指针和元素值');
+                return;
+            }
+            try {
+                const result = await apiRequest(
+                    getBaseUrl() + '/set/' + ptr + '/elements',
+                    'POST',
+                    { value }
+                );
+                showResponse('addElementResponse', result.status, result.statusText, result.data, result.status !== 200);
+            } catch (err) {
+                showResponse('addElementResponse', 0, err.message, { error: err.message }, true);
+            }
+        }
+
+        // 10. 删除元素
+        async function removeElement() {
+            const ptr = document.getElementById('removeElementPtr').value.trim();
+            const value = document.getElementById('removeElementValue').value.trim();
+
+            if (!ptr || !value) {
+                alert('请输入集合指针和元素值');
+                return;
+            }
+            try {
+                const result = await apiRequest(
+                    getBaseUrl() + '/set/' + ptr + '/elements',
+                    'DELETE',
+                    { value }
+                );
+                showResponse('removeElementResponse', result.status, result.statusText, result.data, result.status !== 200);
+            } catch (err) {
+                showResponse('removeElementResponse', 0, err.message, { error: err.message }, true);
+            }
+        }
+
+        // 11. 检查指针是否存在
+        async function checkPtrExist() {
+            const ptr = document.getElementById('checkPtr').value.trim();
+            if (!ptr) {
+                alert('请输入指针');
+                return;
+            }
+            try {
+                const result = await apiRequest(getBaseUrl() + '/ptr/' + ptr + '/exist', 'GET');
+                showResponse('checkPtrResponse', result.status, result.statusText, result.data, result.status !== 200);
+            } catch (err) {
+                showResponse('checkPtrResponse', 0, err.message, { error: err.message }, true);
+            }
+        }
+
+        // 12. 健康检查
+        async function healthCheck() {
+            try {
+                const result = await apiRequest(getBaseUrl() + '/health', 'GET');
+                showResponse('healthResponse', result.status, result.statusText, result.data, result.status !== 200);
+            } catch (err) {
+                showResponse('healthResponse', 0, err.message, { error: err.message }, true);
+            }
+        }
+    </script>
+</body>
+
+</html>

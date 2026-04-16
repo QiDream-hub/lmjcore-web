@@ -197,16 +197,23 @@ void http_parser_create(http_parser_context_t **ctx_out) {
     return;
   }
 
-  static llhttp_settings_t settings = {
-      .on_url = on_url,
-      .on_body = on_body,
-      .on_header_field = on_header_field,
-      .on_header_value = on_header_value,
-      .on_message_complete = on_message_complete,
-  };
+  llhttp_settings_t *settings =
+      (llhttp_settings_t *)malloc(sizeof(llhttp_settings_t));
+  if (!settings) {
+    free(ctx);
+    *ctx_out = NULL;
+    return;
+  }
+  
+  llhttp_settings_init(settings);
 
-  llhttp_settings_init(&settings);
-  llhttp_init(&ctx->parser, HTTP_REQUEST, &settings);
+  settings->on_url = on_url;
+  settings->on_body = on_body;
+  settings->on_header_field = on_header_field;
+  settings->on_header_value = on_header_value;
+  settings->on_message_complete = on_message_complete;
+
+  llhttp_init(&ctx->parser, HTTP_REQUEST, settings);
 
   ctx->parser.data = ctx;
   ctx->local_request =
@@ -297,6 +304,11 @@ void http_parser_reset(http_parser_context_t *ctx) {
 void http_parser_destroy(http_parser_context_t *ctx) {
   if (!ctx)
     return;
+
+  // 释放 llhttp settings（在 http_parser_create 中分配）
+  if (ctx->parser.settings) {
+    free((void *)ctx->parser.settings);
+  }
 
   if (ctx->local_request) {
     free(ctx->local_request->url);

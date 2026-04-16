@@ -104,17 +104,34 @@ set(ALL_SOURCES
 # -----------------------------------------------------------
 add_executable(lmjcore_server ${ALL_SOURCES})
 
+# 查找系统 llhttp 库
+find_path(LLHTTP_INCLUDE_DIR
+    NAMES llhttp.h
+    PATHS /usr/include /usr/local/include
+)
+
+find_library(LLHTTP_LIBRARY
+    NAMES llhttp
+    PATHS /usr/lib /usr/local/lib
+)
+
+if(NOT LLHTTP_INCLUDE_DIR OR NOT LLHTTP_LIBRARY)
+    message(FATAL_ERROR "llhttp not found. Please install llhttp development package.")
+else()
+    message(STATUS "Found llhttp Include: ${LLHTTP_INCLUDE_DIR}")
+    message(STATUS "Found llhttp Library: ${LLHTTP_LIBRARY}")
+endif()
+
 # 添加头文件搜索路径
 target_include_directories(lmjcore_server PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src/handlers
     ${LMDB_INCLUDE_DIR}
+    ${LLHTTP_INCLUDE_DIR}
     ${THIRDPARTY_DIR}/LMJCore/core/include
     ${THIRDPARTY_DIR}/LMJCore/Toolkit/ptr_uuid_gen/include
     ${THIRDPARTY_DIR}/URLRouter/include
 )
-
-# 添加 llhttp 头文件路径（系统库，位于/usr/include）
 
 # -----------------------------------------------------------
 # 6. 链接库 (重点修改这里)
@@ -124,8 +141,8 @@ target_link_libraries(lmjcore_server
     # 注意：确保 ${LMDB_LIBRARY} 解析出来的是 /usr/lib/liblmdb.so
     ${LMDB_LIBRARY}
 
-    # 2. llhttp HTTP 解析库
-    llhttp
+    # 2. llhttp HTTP 解析库（系统库）
+    ${LLHTTP_LIBRARY}
 
     # 3. 再链接系统库
     # pthread, rt, m 等系统库通常放在后面

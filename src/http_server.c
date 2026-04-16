@@ -186,64 +186,77 @@ static THREAD_RETURN_TYPE handle_connection_thread(void *arg) {
   // 设置套接字选项
   set_socket_options(client_fd);
 
+  // 初始化 llhttp 解析器上下文
+  http_parser_context_t *parser_ctx = NULL;
+  http_parser_create(&parser_ctx);
+
   // 读取请求缓冲区
   char request_buffer[16384] = {0};
   int bytes_read =
       read_http_request(client_fd, request_buffer, sizeof(request_buffer));
 
   http_response_t response = {0};
-  http_request_t request = {0};
+  http_request_t *request = NULL;
   const char *method_str = "UNKNOWN";
   const char *url_str = "/";
 
-  if (bytes_read > 0) {
-    // 1. 解析 HTTP 请求
-    if (http_parse_request(request_buffer, bytes_read, &request) == 0) {
-      method_str = (request.method == HTTP_GET)       ? "GET"
-                   : (request.method == HTTP_POST)    ? "POST"
-                   : (request.method == HTTP_PUT)     ? "PUT"
-                   : (request.method == HTTP_DELETE)  ? "DELETE"
-                   : (request.method == HTTP_PATCH)   ? "PATCH"
-                   : (request.method == HTTP_HEAD)    ? "HEAD"
-                   : (request.method == HTTP_OPTIONS) ? "OPTIONS"
-                                                      : "UNKNOWN";
-      url_str = request.url ? request.url : "/";
+  if (bytes_read > 0 && parser_ctx) {
+    // 1. 使用 llhttp 解析 HTTP 请求
+    if (http_parser_execute(parser_ctx, request_buffer, bytes_read) == 0) {
+      // 获取解析后的请求（返回新分配的结构）
+      request = http_parser_get_request(parser_ctx);
+      if (request) {
+        method_str = (request->method == HTTP_GET)       ? "GET"
+                     : (request->method == HTTP_POST)    ? "POST"
+                     : (request->method == HTTP_PUT)     ? "PUT"
+                     : (request->method == HTTP_DELETE)  ? "DELETE"
+                     : (request->method == HTTP_PATCH)   ? "PATCH"
+                     : (request->method == HTTP_HEAD)    ? "HEAD"
+                     : (request->method == HTTP_OPTIONS) ? "OPTIONS"
+                                                         : "UNKNOWN";
+        url_str = request->url ? request->url : "/";
 
-      // 2. 路由匹配
-      if (server->router) {
-        route_params_t params = {0};
-        route_node_t *node =
-            router_match(server->router, request.method, request.url);
-        route_callback_t handler = router_get_callback(node);
-        // 3. 调用处理器
-        if (node && handler) {
-          handle_params_t h_params = {.params = &params,
-                                      .env = server->env,
-                                      .body = request.body,
-                                      .body_len = request.body_len};
+        // 2. 路由匹配
+        if (server->router) {
+          route_params_t params = {0};
+          route_node_t *node =
+              router_match(server->router, request->method, request->url);
+          route_callback_t handler = router_get_callback(node);
+          // 3. 调用处理器
+          if (node && handler) {
+            handle_params_t h_params = {.params = &params,
+                                        .env = server->env,
+                                        .body = request->body,
+                                        .body_len = request->body_len};
 
-          // 调用由 lmjcore_handle 实现的函数
-          int handler_result = handler(&h_params, &response);
+            // 调用由 lmjcore_handle 实现的函数
+            int handler_result = handler(&h_params, &response);
 
-          if (handler_result != 0) {
-            // 处理器返回错误，如果没有设置响应体，则设置默认错误
-            if (response.body == NULL) {
-              response.status_code = 500;
-              response.body = strdup("{\"error\":\"Internal Server Error\"}");
-              response.body_len = strlen(response.body);
+            if (handler_result != 0) {
+              // 处理器返回错误，如果没有设置响应体，则设置默认错误
+              if (response.body == NULL) {
+                response.status_code = 500;
+                response.body = strdup("{\"error\":\"Internal Server Error\"}");
+                response.body_len = strlen(response.body);
+              }
             }
-          }
 
+          } else {
+            // 404 Not Found
+            response.status_code = 404;
+            response.body = strdup("{\"error\":\"Not Found\"}");
+            response.body_len = strlen(response.body);
+          }
         } else {
-          // 404 Not Found
-          response.status_code = 404;
-          response.body = strdup("{\"error\":\"Not Found\"}");
+          // 路由器未初始化
+          response.status_code = 500;
+          response.body = strdup("{\"error\":\"Router not configured\"}");
           response.body_len = strlen(response.body);
         }
       } else {
-        // 路由器未初始化
+        // 获取请求失败
         response.status_code = 500;
-        response.body = strdup("{\"error\":\"Router not configured\"}");
+        response.body = strdup("{\"error\":\"Failed to get request\"}");
         response.body_len = strlen(response.body);
       }
     } else {
@@ -252,7 +265,7 @@ static THREAD_RETURN_TYPE handle_connection_thread(void *arg) {
       response.body = strdup("{\"error\":\"Bad Request\"}");
       response.body_len = strlen(response.body);
     }
-  } else {
+  } else if (bytes_read <= 0) {
     // 读取请求失败
     response.status_code = 400;
     response.body = strdup("{\"error\":\"Failed to read request\"}");
@@ -288,7 +301,10 @@ static THREAD_RETURN_TYPE handle_connection_thread(void *arg) {
 
   // 6. 清理资源
   http_free_response(&response);
-  http_free_request(&request);
+  http_free_request(request);  // 释放 http_parser_get_request 返回的请求
+  if (parser_ctx) {
+    http_parser_destroy(parser_ctx);
+  }
   CLOSE_SOCKET(client_fd);
   free(args);
 

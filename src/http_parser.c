@@ -1,51 +1,315 @@
-#include "http_parser.h"
+/**
+ * @file http_parser.c - 基于 llhttp 的 HTTP 解析实现
+ *
+ * 注意：本文件需要直接包含 llhttp.h，因此不能包含 router.h（会导致枚举冲突）。
+ * 我们使用内部的类型定义，并在返回请求时进行转换。
+ */
+
+#include <llhttp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-// ==================== 辅助函数实现 ====================
+// 本地定义 http_method_t 以避免与 llhttp 冲突
+// 这些值必须与 router.h 中的 http_method_t 一致
+typedef enum {
+  LOCAL_HTTP_GET = 0,
+  LOCAL_HTTP_POST = 1,
+  LOCAL_HTTP_PUT = 2,
+  LOCAL_HTTP_DELETE = 3,
+  LOCAL_HTTP_PATCH = 4,
+  LOCAL_HTTP_HEAD = 5,
+  LOCAL_HTTP_OPTIONS = 6
+} local_http_method_t;
 
-// 辅助函数：查找头部结束位置（空行）
-static const char *find_headers_end(const char *data, size_t data_len) {
-  for (size_t i = 0; i + 3 < data_len; i++) {
-    // 标准 HTTP 换行符 \r\n\r\n
-    if (data[i] == '\r' && data[i + 1] == '\n' && data[i + 2] == '\r' &&
-        data[i + 3] == '\n') {
-      return data + i + 4;
-    }
-    // 宽容处理：仅 \n\n
-    if (data[i] == '\n' && data[i + 1] == '\n') {
-      return data + i + 2;
-    }
+// 本地请求结构
+typedef struct {
+  local_http_method_t method;
+  char *url;
+  char *body;
+  size_t body_len;
+  char *content_type;
+  char *content_length;
+  char *host;
+} local_http_request_t;
+
+// 公开请求结构（与 router.h 的 http_method_t 兼容）
+typedef struct {
+  int method; // 使用 int 而不是 http_method_t 以避免包含 router.h
+  char *url;
+  char *body;
+  size_t body_len;
+  char *content_type;
+  char *content_length;
+  char *host;
+} public_http_request_t;
+
+// 解析器上下文结构
+typedef struct http_parser_context {
+  llhttp_t parser;
+  local_http_request_t *local_request;
+  char url_buf[2048];
+  size_t url_len;
+  char header_key[256];
+  size_t header_key_len;
+  char current_header_value[1024];
+  size_t current_header_value_len;
+  int parsing_header;
+} http_parser_context_t;
+
+// 公开响应结构
+typedef struct {
+  int status_code;
+  char *body;
+  size_t body_len;
+} http_response_t;
+
+// ==================== llhttp 回调函数 ====================
+
+static int on_url(llhttp_t *parser, const char *at, size_t length) {
+  http_parser_context_t *ctx = (http_parser_context_t *)parser->data;
+
+  if (length >= sizeof(ctx->url_buf) - 1) {
+    return HPE_USER;
   }
-  return NULL;
+
+  memcpy(ctx->url_buf, at, length);
+  ctx->url_buf[length] = '\0';
+  ctx->url_len = length;
+
+  return HPE_OK;
 }
 
-// 辅助函数：字符串到 HTTP 方法枚举
-static int str_to_http_method(const char *method_str, http_method_t *method) {
-  if (strcmp(method_str, "GET") == 0)
-    *method = HTTP_GET;
-  else if (strcmp(method_str, "POST") == 0)
-    *method = HTTP_POST;
-  else if (strcmp(method_str, "PUT") == 0)
-    *method = HTTP_PUT;
-  else if (strcmp(method_str, "DELETE") == 0)
-    *method = HTTP_DELETE;
-  else if (strcmp(method_str, "PATCH") == 0)
-    *method = HTTP_PATCH;
-  else if (strcmp(method_str, "HEAD") == 0)
-    *method = HTTP_HEAD;
-  else if (strcmp(method_str, "OPTIONS") == 0)
-    *method = HTTP_OPTIONS;
-  else
-    return -1; // 不支持的方法
-  return 0;
+static int on_body(llhttp_t *parser, const char *at, size_t length) {
+  http_parser_context_t *ctx = (http_parser_context_t *)parser->data;
+  local_http_request_t *req = ctx->local_request;
+
+  char *new_body = (char *)realloc(req->body, req->body_len + length + 1);
+  if (!new_body) {
+    return HPE_USER;
+  }
+
+  req->body = new_body;
+  memcpy(req->body + req->body_len, at, length);
+  req->body_len += length;
+  req->body[req->body_len] = '\0';
+
+  return HPE_OK;
+}
+
+static int on_header_field(llhttp_t *parser, const char *at, size_t length) {
+  http_parser_context_t *ctx = (http_parser_context_t *)parser->data;
+
+  if (!ctx->parsing_header) {
+    ctx->header_key_len = 0;
+    ctx->current_header_value_len = 0;
+    ctx->parsing_header = 1;
+  }
+
+  if (ctx->header_key_len + length >= sizeof(ctx->header_key) - 1) {
+    return HPE_USER;
+  }
+
+  memcpy(ctx->header_key + ctx->header_key_len, at, length);
+  ctx->header_key_len += length;
+  ctx->header_key[ctx->header_key_len] = '\0';
+
+  return HPE_OK;
+}
+
+static int on_header_value(llhttp_t *parser, const char *at, size_t length) {
+  http_parser_context_t *ctx = (http_parser_context_t *)parser->data;
+
+  ctx->parsing_header = 0;
+
+  if (ctx->current_header_value_len + length >=
+      sizeof(ctx->current_header_value) - 1) {
+    return HPE_USER;
+  }
+
+  memcpy(ctx->current_header_value + ctx->current_header_value_len, at, length);
+  ctx->current_header_value_len += length;
+  ctx->current_header_value[ctx->current_header_value_len] = '\0';
+
+  if (strcasecmp(ctx->header_key, "Content-Type") == 0) {
+    ctx->local_request->content_type = strdup(ctx->current_header_value);
+  } else if (strcasecmp(ctx->header_key, "Content-Length") == 0) {
+    ctx->local_request->content_length = strdup(ctx->current_header_value);
+  } else if (strcasecmp(ctx->header_key, "Host") == 0) {
+    ctx->local_request->host = strdup(ctx->current_header_value);
+  }
+
+  return HPE_OK;
+}
+
+static int on_message_complete(llhttp_t *parser) {
+  http_parser_context_t *ctx = (http_parser_context_t *)parser->data;
+
+  ctx->local_request->url = strdup(ctx->url_buf);
+
+  return HPE_OK;
+}
+
+// ==================== 辅助函数 ====================
+
+/**
+ * @brief 将 llhttp 方法枚举转换为本地方法枚举
+ *
+ * llhttp 枚举值：
+ *   HTTP_DELETE = 0, HTTP_GET = 1, HTTP_HEAD = 2, HTTP_POST = 3,
+ *   HTTP_PUT = 4, HTTP_OPTIONS = 6, HTTP_PATCH = 28
+ *
+ * 本地枚举值（与 router.h 一致）：
+ *   HTTP_GET = 0, HTTP_POST = 1, HTTP_PUT = 2, HTTP_DELETE = 3,
+ *   HTTP_PATCH = 4, HTTP_HEAD = 5, HTTP_OPTIONS = 6
+ */
+static local_http_method_t llhttp_method_to_local(llhttp_method_t method) {
+  switch (method) {
+  case 1:
+    return LOCAL_HTTP_GET; // llhttp HTTP_GET
+  case 3:
+    return LOCAL_HTTP_POST; // llhttp HTTP_POST
+  case 4:
+    return LOCAL_HTTP_PUT; // llhttp HTTP_PUT
+  case 0:
+    return LOCAL_HTTP_DELETE; // llhttp HTTP_DELETE
+  case 28:
+    return LOCAL_HTTP_PATCH; // llhttp HTTP_PATCH
+  case 2:
+    return LOCAL_HTTP_HEAD; // llhttp HTTP_HEAD
+  case 6:
+    return LOCAL_HTTP_OPTIONS; // llhttp HTTP_OPTIONS
+  default:
+    return LOCAL_HTTP_GET;
+  }
+}
+
+// ==================== 公开 API 实现 ====================
+
+void http_parser_create(http_parser_context_t **ctx_out) {
+  if (!ctx_out)
+    return;
+
+  http_parser_context_t *ctx =
+      (http_parser_context_t *)calloc(1, sizeof(http_parser_context_t));
+  if (!ctx) {
+    *ctx_out = NULL;
+    return;
+  }
+
+  static llhttp_settings_t settings = {
+      .on_url = on_url,
+      .on_body = on_body,
+      .on_header_field = on_header_field,
+      .on_header_value = on_header_value,
+      .on_message_complete = on_message_complete,
+  };
+
+  llhttp_settings_init(&settings);
+  llhttp_init(&ctx->parser, HTTP_REQUEST, &settings);
+
+  ctx->parser.data = ctx;
+  ctx->local_request =
+      (local_http_request_t *)calloc(1, sizeof(local_http_request_t));
+
+  *ctx_out = ctx;
+}
+
+int http_parser_execute(http_parser_context_t *ctx, const char *data,
+                        size_t data_len) {
+  if (!ctx || !data || data_len == 0) {
+    return -1;
+  }
+
+  enum llhttp_errno err = llhttp_execute(&ctx->parser, data, data_len);
+
+  if (err == HPE_OK) {
+    ctx->local_request->method = llhttp_method_to_local(ctx->parser.method);
+    return 0;
+  } else if (err == HPE_PAUSED) {
+    return 0;
+  } else {
+    fprintf(stderr, "HTTP 解析错误：%s (%d) at position %ld\n",
+            llhttp_errno_name(err), err,
+            llhttp_get_error_pos(&ctx->parser) - data);
+    return -1;
+  }
 }
 
 /**
- * @brief 获取 HTTP 状态码对应的描述文本
+ * @brief 内部请求结构转换为公开请求结构
  */
-static const char *get_status_text(int status_code) {
+static public_http_request_t *
+convert_to_public_request(local_http_request_t *local_req) {
+  if (!local_req)
+    return NULL;
+
+  public_http_request_t *pub_req =
+      (public_http_request_t *)calloc(1, sizeof(public_http_request_t));
+  if (!pub_req)
+    return NULL;
+
+  // 直接复制值（因为枚举值已转换过，与 router.h 一致）
+  pub_req->method = (int)local_req->method;
+  pub_req->url = local_req->url ? strdup(local_req->url) : NULL;
+  pub_req->body = local_req->body ? strdup(local_req->body) : NULL;
+  pub_req->body_len = local_req->body_len;
+  pub_req->content_type =
+      local_req->content_type ? strdup(local_req->content_type) : NULL;
+  pub_req->content_length =
+      local_req->content_length ? strdup(local_req->content_length) : NULL;
+  pub_req->host = local_req->host ? strdup(local_req->host) : NULL;
+
+  return pub_req;
+}
+
+public_http_request_t *http_parser_get_request(http_parser_context_t *ctx) {
+  if (!ctx || !ctx->local_request)
+    return NULL;
+  return convert_to_public_request(ctx->local_request);
+}
+
+void http_parser_reset(http_parser_context_t *ctx) {
+  if (!ctx)
+    return;
+
+  llhttp_reset(&ctx->parser);
+
+  ctx->url_buf[0] = '\0';
+  ctx->url_len = 0;
+  ctx->header_key[0] = '\0';
+  ctx->header_key_len = 0;
+  ctx->current_header_value[0] = '\0';
+  ctx->current_header_value_len = 0;
+  ctx->parsing_header = 0;
+
+  // 释放请求资源
+  if (ctx->local_request) {
+    free(ctx->local_request->url);
+    free(ctx->local_request->body);
+    free(ctx->local_request->content_type);
+    free(ctx->local_request->content_length);
+    free(ctx->local_request->host);
+    memset(ctx->local_request, 0, sizeof(local_http_request_t));
+  }
+}
+
+void http_parser_destroy(http_parser_context_t *ctx) {
+  if (!ctx)
+    return;
+
+  if (ctx->local_request) {
+    free(ctx->local_request->url);
+    free(ctx->local_request->body);
+    free(ctx->local_request->content_type);
+    free(ctx->local_request->content_length);
+    free(ctx->local_request->host);
+    free(ctx->local_request);
+  }
+  free(ctx);
+}
+
+const char *get_status_text(int status_code) {
   switch (status_code) {
   case 200:
     return "OK";
@@ -68,147 +332,10 @@ static const char *get_status_text(int status_code) {
   }
 }
 
-// 辅助函数：安全地复制字符串
-static char *safe_strdup(const char *s) {
-  if (!s)
-    return NULL;
-  return strdup(s);
-}
-
-/**
- * 在数据缓冲区中查找指定的字节序列
- */
-static char *find_key_offset(char *data, size_t data_len, size_t start_offset,
-                             const char *target_key, size_t target_key_len) {
-  if (!data || !target_key || data_len == 0 || target_key_len == 0) {
-    return NULL;
-  }
-
-  if (start_offset >= data_len || target_key_len > data_len - start_offset) {
-    return NULL;
-  }
-
-  for (size_t i = start_offset; i <= data_len - target_key_len; i++) {
-    if (data[i] == target_key[0]) {
-      if (memcmp(data + i, target_key, target_key_len) == 0) {
-        return data + i;
-      }
-    }
-  }
-  return NULL;
-}
-
-// 复用通用定义查找空格
-static char *find_space_offset(char *data, size_t data_len,
-                               size_t start_offset) {
-  const char target_key = ' ';
-  return find_key_offset(data, data_len, start_offset, &target_key, 1);
-}
-
-// ==================== 核心解析与构建函数 ====================
-
-int http_parse_request(const char *data, size_t data_len,
-                       http_request_t *request_out) {
-  if (!data || data_len == 0 || !request_out)
-    return -1;
-
-  memset(request_out, 0, sizeof(http_request_t));
-
-  // 分配临时缓冲区
-  char *buffer = (char *)malloc(data_len + 1);
-  if (!buffer)
-    return -1;
-
-  memcpy(buffer, data, data_len);
-  buffer[data_len] = '\0';
-
-  // --- 解析首行 ---
-  char *space1 = find_space_offset(buffer, data_len, 0);
-  if (!space1)
-    goto cleanup_error;
-
-  *space1 = '\0';
-  char *method_str = buffer;
-
-  char *space2 = find_space_offset(buffer, data_len, space1 - buffer + 1);
-  if (!space2)
-    goto cleanup_error;
-
-  *space2 = '\0';
-  char *url_str = space1 + 1;
-
-  // 查找行尾（HTTP 版本字符串结束位置）
-  // 只在剩余数据中查找第一个\r 或\n，避免误匹配请求体中的换行符
-  char *line_end = NULL;
-  size_t version_start = space2 - buffer + 1;
-  for (size_t i = version_start; i < data_len; i++) {
-    if (buffer[i] == '\r' || buffer[i] == '\n') {
-      line_end = buffer + i;
-      break;
-    }
-  }
-
-  if (line_end) {
-    *line_end = '\0';
-  }
-  char *version_str = space2 + 1;
-
-  // --- 数据验证与转换 ---
-  if (!method_str || !url_str || !version_str) {
-    goto cleanup_error;
-  }
-
-  if (str_to_http_method(method_str, &request_out->method) != 0) {
-    goto cleanup_error;
-  }
-
-  request_out->url = safe_strdup(url_str);
-  if (!request_out->url)
-    goto cleanup_error;
-
-  // --- 解析请求体 ---
-  // 在 buffer 中查找 headers 结束位置（空行 \r\n\r\n 或 \n\n）
-  const char *body_start = find_headers_end(buffer, data_len);
-
-  if (body_start) {
-    size_t body_size = data_len - (body_start - buffer);
-    if (body_size > 0) {
-      request_out->body = (char *)malloc(body_size + 1);
-      if (!request_out->body) {
-        goto cleanup_error;
-      }
-      memcpy(request_out->body, body_start, body_size);
-      request_out->body[body_size] = '\0';
-      request_out->body_len = body_size;
-    }
-  }
-
-  // --- 解析头部（简单实现：暂不存储）---
-
-  free(buffer);
-  return 0;
-
-cleanup_error:
-  if (request_out->url)
-    free(request_out->url);
-  if (request_out->body)
-    free(request_out->body);
-  free(buffer);
-  memset(request_out, 0, sizeof(http_request_t));
-  return -1;
-}
-
 int http_build_response(const http_response_t *response, char *out_buf,
                         size_t out_buf_size) {
   if (!response || !out_buf || out_buf_size == 0) {
     return -1;
-  }
-
-  // 检查是否需要 Body
-  if (response->status_code >= 200 && response->status_code < 300) {
-    if (!response->body && response->status_code != 204) {
-      return -3;
-    }
   }
 
   const char *status_text = get_status_text(response->status_code);
@@ -217,8 +344,8 @@ int http_build_response(const http_response_t *response, char *out_buf,
   if (response->body && response->body_len > 0) {
     written = snprintf(out_buf, out_buf_size,
                        "HTTP/1.1 %d %s\r\n"
-                       "Access-Control-Allow-Origin: *\r\n"          // 允许所有来源
-                       "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n" // 允许的方法
+                       "Access-Control-Allow-Origin: *\r\n"
+                       "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
                        "Content-Type: application/json\r\n"
                        "Content-Length: %zu\r\n"
                        "Connection: close\r\n"
@@ -229,8 +356,8 @@ int http_build_response(const http_response_t *response, char *out_buf,
   } else {
     written = snprintf(out_buf, out_buf_size,
                        "HTTP/1.1 %d %s\r\n"
-                       "Access-Control-Allow-Origin: *\r\n"          // 允许所有来源
-                       "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n" // 允许的方法
+                       "Access-Control-Allow-Origin: *\r\n"
+                       "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
                        "Content-Length: 0\r\n"
                        "Connection: close\r\n"
                        "\r\n",
@@ -244,20 +371,21 @@ int http_build_response(const http_response_t *response, char *out_buf,
   return written;
 }
 
-// ==================== 资源释放函数 ====================
-
-void http_free_request(http_request_t *request) {
+void http_free_request(public_http_request_t *request) {
   if (request) {
-    if (request->url) {
-      free(request->url);
-      request->url = NULL;
-    }
-    if (request->body) {
-      free(request->body);
-      request->body = NULL;
-    }
+    free(request->url);
+    request->url = NULL;
+    free(request->body);
+    request->body = NULL;
+    free(request->content_type);
+    request->content_type = NULL;
+    free(request->content_length);
+    request->content_length = NULL;
+    free(request->host);
+    request->host = NULL;
     request->body_len = 0;
     request->method = 0;
+    free(request);
   }
 }
 

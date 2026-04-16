@@ -1,8 +1,8 @@
 #ifndef HTTP_SERVER_H
 #define HTTP_SERVER_H
 
-#include "../thirdparty/LMJCore/core/include/lmjcore.h"
-#include "../thirdparty/URLRouter/include/router.h"
+#include "lmjcore.h"
+#include "router.h"
 #include "http_parser.h"
 #include "lmjcore_handle.h"
 #include <stdbool.h>

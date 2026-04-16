@@ -1,6 +1,6 @@
-#include "../include/http_server.h"
-#include "../include/routes.h"
-#include "../thirdparty/LMJCore/Toolkit/ptr_uuid_gen/include/lmjcore_uuid_gen.h"
+#include "http_server.h"
+#include "routes.h"
+#include "lmjcore_uuid_gen.h"
 #include <signal.h>
 #include <stdio.h>
 

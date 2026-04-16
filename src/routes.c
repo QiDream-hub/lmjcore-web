@@ -1,6 +1,6 @@
 // src/routes.c - 路由注册
-#include "../include/routes.h"
-#include "../include/lmjcore_handle.h"
+#include "routes.h"
+#include "lmjcore_handle.h"
 #include <stdio.h>
 
 /**

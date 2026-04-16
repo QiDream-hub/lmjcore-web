@@ -1,5 +1,5 @@
-#include "../include/http_server.h"
-#include "../thirdparty/LMJCore/core/include/lmjcore.h"
+#include "http_server.h"
+#include "lmjcore.h"
 #include <errno.h>
 #include <pthread.h>
 #include <signal.h>

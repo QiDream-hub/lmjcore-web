@@ -4,7 +4,7 @@
 #define LMJCORE_HANDLE_H
 
 #include "handle_utils.h"
-#include "../thirdparty/URLRouter/include/router.h"
+#include "router.h"
 
 // ==================== 对象处理器 ====================
 // 实现文件：src/handlers/obj_handle.c

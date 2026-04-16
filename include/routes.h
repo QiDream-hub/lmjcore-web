@@ -1,7 +1,7 @@
 #ifndef ROUTES_H
 #define ROUTES_H
 
-#include "../thirdparty/URLRouter/include/router.h"
+#include "router.h"
 /**
  * @brief 注册所有 API 路由
  *

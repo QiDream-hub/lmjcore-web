@@ -2,7 +2,7 @@
 #ifndef LMJCORE_SERVER_ERRORS_H
 #define LMJCORE_SERVER_ERRORS_H
 
-#include "../thirdparty/LMJCore/core/include/lmjcore.h"
+#include "lmjcore.h"
 
 // ==================== LMJCore 网络壳扩展错误码 ====================
 // 扩展范围：-32100 ~ -32199

@@ -2,9 +2,9 @@
 #ifndef HANDLE_UTILS_H
 #define HANDLE_UTILS_H
 
-#include "../thirdparty/LMJCore/core/include/lmjcore.h"
+#include "lmjcore.h"
 #include "http_parser.h"
-#include "../thirdparty/URLRouter/include/router.h"
+#include "router.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>

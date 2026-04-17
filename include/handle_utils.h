@@ -31,6 +31,8 @@ typedef struct {
   lmjcore_env *env;
   char *body;      // 请求体
   size_t body_len; // 请求体长度
+  int txn_timeout; // 事务超时时间（秒）
+  time_t txn_start_time; // 事务开始时间
 } handle_params_t;
 
 // ==================== 工具函数声明 ====================
@@ -119,5 +121,21 @@ int lmjcore_decode_value(const uint8_t *data, size_t data_len, char **out_str,
  */
 void lmjcore_free_path_parse_result(char *start_ptr, char **segments,
                                     size_t segment_count);
+
+/**
+ * @brief 检查事务是否超时
+ *
+ * @param start_time 事务开始时间
+ * @param timeout 超时时间（秒）
+ * @return bool true 表示已超时，false 表示未超时
+ */
+bool lmjcore_txn_check_timeout(time_t start_time, int timeout);
+
+/**
+ * @brief 获取当前时间（用于事务超时检查）
+ *
+ * @return time_t 当前时间
+ */
+time_t lmjcore_txn_get_start_time(void);
 
 #endif // HANDLE_UTILS_H

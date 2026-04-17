@@ -159,4 +159,11 @@ static inline int build_success_response(int status_code, const char *json_body,
   return build_error_response(HTTP_STATUS_BAD_REQUEST,                         \
                               "Missing value in request body", response)
 
+/**
+ * @brief 便捷宏：返回事务超时错误
+ */
+#define RETURN_ERROR_TXN_TIMEOUT(response)                                     \
+  return build_error_response(HTTP_STATUS_REQUEST_TIMEOUT,                     \
+                              "Transaction timeout", response)
+
 #endif // ERROR_RESPONSE_H

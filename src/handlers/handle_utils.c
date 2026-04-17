@@ -1,10 +1,12 @@
 // src/handlers/handle_utils.c - 处理器通用工具函数实现
 #include "handle_utils.h"
 #include "lmjcore.h"
+#include "error_codes.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 // ==================== 路由参数辅助函数 ====================
 
@@ -351,4 +353,19 @@ void lmjcore_free_path_parse_result(char *start_ptr, char **segments,
     free(segments[i]);
   }
   free(segments);
+}
+
+// ==================== 事务超时检查工具 ====================
+
+time_t lmjcore_txn_get_start_time(void) {
+  return time(NULL);
+}
+
+bool lmjcore_txn_check_timeout(time_t start_time, int timeout) {
+  if (timeout <= 0) {
+    return false; // 超时禁用
+  }
+
+  time_t current_time = time(NULL);
+  return difftime(current_time, start_time) >= timeout;
 }

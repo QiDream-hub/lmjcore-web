@@ -8,6 +8,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+// ==================== 事务超时检查宏 ====================
+
+#define CHECK_TXN_TIMEOUT(hp, response, txn)                                 \
+  do {                                                                       \
+    if (lmjcore_txn_check_timeout((hp)->txn_start_time, (hp)->txn_timeout)) {\
+      if (txn) lmjcore_txn_abort(txn);                                       \
+      RETURN_ERROR_TXN_TIMEOUT(response);                                    \
+    }                                                                        \
+  } while (0)
+
 // ==================== 对象处理器 ====================
 
 int handle_obj_create(void *params, void *cbdata) {
@@ -24,6 +34,9 @@ int handle_obj_create(void *params, void *cbdata) {
   if (rc != LMJCORE_SUCCESS || !txn) {
     RETURN_ERROR_TXN_FAILED("begin", response);
   }
+
+  // 检查事务超时
+  CHECK_TXN_TIMEOUT(hp, response, txn);
 
   // 创建对象
   lmjcore_ptr obj_ptr;
@@ -78,6 +91,9 @@ int handle_obj_get(void *params, void *cbdata) {
   if (rc != LMJCORE_SUCCESS || !txn) {
     RETURN_ERROR_TXN_FAILED("begin", response);
   }
+
+  // 检查事务超时
+  CHECK_TXN_TIMEOUT(hp, response, txn);
 
   // 检查实体是否存在
   int exists = lmjcore_entity_exist(txn, obj_ptr);
@@ -201,6 +217,9 @@ int handle_obj_member_get(void *params, void *cbdata) {
     RETURN_ERROR_TXN_FAILED("begin", response);
   }
 
+  // 检查事务超时
+  CHECK_TXN_TIMEOUT(hp, response, txn);
+
   // 检查实体是否存在
   int exists = lmjcore_entity_exist(txn, obj_ptr);
   if (exists != 1) {
@@ -296,6 +315,9 @@ int handle_obj_member_put(void *params, void *cbdata) {
     RETURN_ERROR_TXN_FAILED("begin", response);
   }
 
+  // 检查事务超时
+  CHECK_TXN_TIMEOUT(hp, response, txn);
+
   // 检查实体是否存在
   int exists = lmjcore_entity_exist(txn, obj_ptr);
   if (exists != 1) {
@@ -375,6 +397,9 @@ int handle_obj_member_del(void *params, void *cbdata) {
     RETURN_ERROR_TXN_FAILED("begin", response);
   }
 
+  // 检查事务超时
+  CHECK_TXN_TIMEOUT(hp, response, txn);
+
   // 检查实体是否存在
   int exists = lmjcore_entity_exist(txn, obj_ptr);
   if (exists != 1) {
@@ -450,6 +475,9 @@ int handle_obj_query(void *params, void *cbdata) {
     RETURN_ERROR_TXN_FAILED("begin", response);
   }
 
+  // 检查事务超时
+  CHECK_TXN_TIMEOUT(hp, response, txn);
+
   // 遍历路径
   lmjcore_ptr obj_ptr;
   memcpy(obj_ptr, current_ptr, LMJCORE_PTR_LEN);
@@ -457,6 +485,9 @@ int handle_obj_query(void *params, void *cbdata) {
   api_value_type_t current_type = VALUE_TYPE_RAW;
 
   for (size_t i = 0; i < segment_count; i++) {
+    // 在循环中每次迭代前也检查超时（长查询场景）
+    CHECK_TXN_TIMEOUT(hp, response, txn);
+    
     // 检查当前指针是否有效
     int exists = lmjcore_entity_exist(txn, obj_ptr);
     if (exists != 1) {

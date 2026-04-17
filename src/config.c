@@ -282,6 +282,7 @@ int config_to_server_config(config_t *config, server_config_t *server_config) {
   server_config->db_path = config->db_path;
   server_config->map_size = config->map_size;
   server_config->max_connections = config->max_connections;
+  server_config->txn_timeout = config->txn_timeout;
   // env_flags 和 fn 由其他代码设置
 
   return 0;

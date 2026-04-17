@@ -12,6 +12,16 @@
 // 全局启动时间
 static time_t g_start_time = 0;
 
+// ==================== 事务超时检查宏 ====================
+
+#define CHECK_TXN_TIMEOUT(hp, response, txn)                                 \
+  do {                                                                       \
+    if (lmjcore_txn_check_timeout((hp)->txn_start_time, (hp)->txn_timeout)) {\
+      if (txn) lmjcore_txn_abort(txn);                                       \
+      RETURN_ERROR_TXN_TIMEOUT(response);                                    \
+    }                                                                        \
+  } while (0)
+
 // ==================== 工具处理器 ====================
 
 int handle_ptr_exist(void *params, void *cbdata) {
@@ -40,6 +50,9 @@ int handle_ptr_exist(void *params, void *cbdata) {
   if (rc != LMJCORE_SUCCESS || !txn) {
     RETURN_ERROR_TXN_FAILED("begin", response);
   }
+
+  // 检查事务超时
+  CHECK_TXN_TIMEOUT(hp, response, txn);
 
   // 检查实体是否存在
   int exists = lmjcore_entity_exist(txn, ptr);

@@ -182,7 +182,9 @@ static THREAD_RETURN_TYPE handle_connection_thread(void *arg) {
             handle_params_t h_params = {.params = &params,
                                         .env = server->env,
                                         .body = request->body,
-                                        .body_len = request->body_len};
+                                        .body_len = request->body_len,
+                                        .txn_timeout = server->config.txn_timeout,
+                                        .txn_start_time = lmjcore_txn_get_start_time()};
 
             int handler_result = handler(&h_params, &response);
 

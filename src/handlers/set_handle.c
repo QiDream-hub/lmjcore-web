@@ -8,6 +8,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+// ==================== 事务超时检查宏 ====================
+
+#define CHECK_TXN_TIMEOUT(hp, response, txn)                                 \
+  do {                                                                       \
+    if (lmjcore_txn_check_timeout((hp)->txn_start_time, (hp)->txn_timeout)) {\
+      if (txn) lmjcore_txn_abort(txn);                                       \
+      RETURN_ERROR_TXN_TIMEOUT(response);                                    \
+    }                                                                        \
+  } while (0)
+
 // ==================== 集合处理器 ====================
 
 int handle_set_create(void *params, void *cbdata) {
@@ -24,6 +34,9 @@ int handle_set_create(void *params, void *cbdata) {
   if (rc != LMJCORE_SUCCESS || !txn) {
     RETURN_ERROR_TXN_FAILED("begin", response);
   }
+
+  // 检查事务超时
+  CHECK_TXN_TIMEOUT(hp, response, txn);
 
   // 创建集合
   lmjcore_ptr set_ptr;
@@ -78,6 +91,9 @@ int handle_set_get(void *params, void *cbdata) {
   if (rc != LMJCORE_SUCCESS || !txn) {
     RETURN_ERROR_TXN_FAILED("begin", response);
   }
+
+  // 检查事务超时
+  CHECK_TXN_TIMEOUT(hp, response, txn);
 
   // 检查实体是否存在
   int exists = lmjcore_entity_exist(txn, set_ptr);
@@ -200,6 +216,9 @@ int handle_set_add(void *params, void *cbdata) {
     RETURN_ERROR_TXN_FAILED("begin", response);
   }
 
+  // 检查事务超时
+  CHECK_TXN_TIMEOUT(hp, response, txn);
+
   // 检查实体是否存在
   int exists = lmjcore_entity_exist(txn, set_ptr);
   if (exists != 1) {
@@ -291,6 +310,9 @@ int handle_set_remove(void *params, void *cbdata) {
     free(value_str);
     RETURN_ERROR_TXN_FAILED("begin", response);
   }
+
+  // 检查事务超时
+  CHECK_TXN_TIMEOUT(hp, response, txn);
 
   // 检查实体是否存在
   int exists = lmjcore_entity_exist(txn, set_ptr);

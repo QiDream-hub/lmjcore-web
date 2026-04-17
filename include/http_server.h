@@ -7,6 +7,7 @@
 #include "lmjcore_handle.h"
 #include <stdbool.h>
 #include <stddef.h>
+#include <time.h>
 
 // ==================== HTTP 服务器配置 ====================
 
@@ -15,9 +16,10 @@ typedef struct {
   int port;            // 监听端口（默认 8080）
   const char *db_path; // LMDB 数据库路径
   size_t map_size;     // 内存映射大小（默认 10MB = 10 * 1024 * 1024）
-  lmjcore_ptr_generator_fn fn; // LMJCore指针生成函数
+  lmjcore_ptr_generator_fn fn; // LMJCore 指针生成函数
   unsigned int env_flags; // 环境标志（默认安全模式 0）
   int max_connections;    // 最大连接队列（默认 128）
+  int txn_timeout;        // 事务超时时间（秒，默认 5 秒）
 } server_config_t;
 
 // 默认配置
@@ -25,6 +27,7 @@ typedef struct {
 #define SERVER_DEFAULT_PORT 8080
 #define SERVER_DEFAULT_MAP_SIZE (10 * 1024 * 1024) // 10MB
 #define SERVER_DEFAULT_MAX_CONNECTIONS 128
+#define SERVER_DEFAULT_TXN_TIMEOUT 5
 
 // ==================== HTTP 服务器结构 ====================
 
@@ -96,6 +99,16 @@ static inline void http_server_set_router(http_server_t *server,
  */
 static inline lmjcore_env *http_server_get_env(http_server_t *server) {
   return server ? server->env : NULL;
+}
+
+/**
+ * @brief 获取服务器事务超时时间
+ *
+ * @param server 服务器实例指针
+ * @return int 超时时间（秒）
+ */
+static inline int http_server_get_txn_timeout(http_server_t *server) {
+  return server ? server->config.txn_timeout : SERVER_DEFAULT_TXN_TIMEOUT;
 }
 
 #endif // HTTP_SERVER_H

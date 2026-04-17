@@ -21,53 +21,9 @@ typedef enum {
   VALUE_TYPE_RAW = 0,
   VALUE_TYPE_REF = 1,
   VALUE_TYPE_NULL = 2,
-  VALUE_TYPE_SET = 3,   // 集合类型
-  VALUE_TYPE_OBJECT = 4 // 对象类型
+  VALUE_TYPE_SET = 3,
+  VALUE_TYPE_OBJECT = 4
 } api_value_type_t;
-
-// ==================== 响应结构体 ====================
-
-// 成员值响应
-typedef struct {
-  char *member_name;     // 成员名称
-  api_value_type_t type; // 值类型
-  char *value;           // 值字符串（原始数据或指针字符串）
-  size_t value_len;      // 值长度
-} member_response_t;
-
-// 完整对象响应
-typedef struct {
-  char *ptr;                  // 对象指针字符串
-  member_response_t *members; // 成员数组
-  size_t member_count;        // 成员数量
-} object_response_t;
-
-// 集合元素响应
-typedef struct {
-  api_value_type_t type; // 元素类型
-  char *value;           // 元素值
-  size_t value_len;      // 值长度
-} element_response_t;
-
-// 完整集合响应
-typedef struct {
-  char *ptr;                    // 集合指针字符串
-  element_response_t *elements; // 元素数组
-  size_t element_count;         // 元素数量
-} set_response_t;
-
-// 链式查询响应
-typedef struct {
-  char *path;            // 查询路径
-  api_value_type_t type; // 值类型
-  char *value;           // 值
-  size_t value_len;      // 值长度
-} query_response_t;
-
-// 创建响应
-typedef struct {
-  char *ptr; // 新创建的实体指针
-} create_response_t;
 
 // 处理器参数
 typedef struct {
@@ -160,42 +116,8 @@ int lmjcore_decode_value(const uint8_t *data, size_t data_len, char **out_str,
 
 /**
  * @brief 释放路径解析结果
- *
- * @param start_ptr 起始指针字符串
- * @param segments 路径段数组
- * @param segment_count 路径段数量
  */
 void lmjcore_free_path_parse_result(char *start_ptr, char **segments,
                                     size_t segment_count);
-
-/**
- * @brief 释放成员响应数组
- *
- * @param members 成员数组
- * @param count 成员数量
- */
-void lmjcore_free_member_responses(member_response_t *members, size_t count);
-
-/**
- * @brief 释放元素响应数组
- *
- * @param elements 元素数组
- * @param count 元素数量
- */
-void lmjcore_free_element_responses(element_response_t *elements, size_t count);
-
-/**
- * @brief 释放对象响应
- *
- * @param response 对象响应
- */
-void lmjcore_free_object_response(object_response_t *response);
-
-/**
- * @brief 释放集合响应
- *
- * @param response 集合响应
- */
-void lmjcore_free_set_response(set_response_t *response);
 
 #endif // HANDLE_UTILS_H

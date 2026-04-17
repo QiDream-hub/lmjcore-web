@@ -60,21 +60,6 @@ static void log_request(const char *method, const char *url, int status_code,
 }
 
 /**
- * @brief 设置套接字为非阻塞模式（可选）
- */
-static int set_socket_nonblocking(socket_t fd) {
-#ifdef _WIN32
-  u_long mode = 1;
-  return ioctlsocket(fd, FIONBIO, &mode);
-#else
-  int flags = fcntl(fd, F_GETFL, 0);
-  if (flags == -1)
-    return -1;
-  return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-#endif
-}
-
-/**
  * @brief 设置套接字选项
  */
 static int set_socket_options(socket_t fd) {
@@ -133,7 +118,7 @@ static int send_http_response(socket_t client_fd, const char *response,
         send(client_fd, response + total_sent, response_len - total_sent, 0);
     if (sent < 0) {
       if (errno == EINTR)
-        continue; // 被信号中断，重试
+        continue;
       return -1;
     }
     total_sent += sent;
@@ -143,54 +128,22 @@ static int send_http_response(socket_t client_fd, const char *response,
 }
 
 /**
- * @brief 处理 400 错误响应
- */
-static void send_error_response(socket_t client_fd, int status_code,
-                                const char *message) {
-  http_response_t response = {
-      .status_code = status_code, .body = NULL, .body_len = 0};
-
-  // 构建 JSON 错误消息
-  char json_body[256];
-  snprintf(json_body, sizeof(json_body), "{\"error\":\"%s\"}", message);
-  response.body = json_body;
-  response.body_len = strlen(json_body);
-
-  // 构建 HTTP 响应
-  char response_buf[8192];
-  int response_len =
-      http_build_response(&response, response_buf, sizeof(response_buf));
-
-  if (response_len > 0) {
-    send_http_response(client_fd, response_buf, response_len);
-  }
-}
-
-/**
  * @brief 线程函数：处理单个 HTTP 连接
  */
-#ifdef _WIN32
-static THREAD_RETURN_TYPE handle_connection_thread(LPVOID arg) {
-#else
 static THREAD_RETURN_TYPE handle_connection_thread(void *arg) {
-#endif
   thread_args_t *args = (thread_args_t *)arg;
   http_server_t *server = args->server;
   socket_t client_fd = args->client_fd;
 
-  // 获取客户端 IP 地址
   char client_ip[INET_ADDRSTRLEN];
   inet_ntop(AF_INET, &(args->client_addr.sin_addr), client_ip,
             sizeof(client_ip));
 
-  // 设置套接字选项
   set_socket_options(client_fd);
 
-  // 初始化 llhttp 解析器上下文
   http_parser_context_t *parser_ctx = NULL;
   http_parser_create(&parser_ctx);
 
-  // 读取请求缓冲区
   char request_buffer[16384] = {0};
   int bytes_read =
       read_http_request(client_fd, request_buffer, sizeof(request_buffer));
@@ -201,9 +154,7 @@ static THREAD_RETURN_TYPE handle_connection_thread(void *arg) {
   const char *url_str = "/";
 
   if (bytes_read > 0 && parser_ctx) {
-    // 1. 使用 llhttp 解析 HTTP 请求
     if (http_parser_execute(parser_ctx, request_buffer, bytes_read) == 0) {
-      // 获取解析后的请求（返回新分配的结构）
       request = http_parser_get_request(parser_ctx);
       if (request) {
         method_str = (request->method == HTTP_GET)       ? "GET"
@@ -216,106 +167,84 @@ static THREAD_RETURN_TYPE handle_connection_thread(void *arg) {
                                                          : "UNKNOWN";
         url_str = request->url ? request->url : "/";
 
-        // 处理 OPTIONS 预检请求 - 直接返回 204 无内容响应
         if (request->method == HTTP_OPTIONS) {
           response.status_code = 204;
           response.body = NULL;
           response.body_len = 0;
         }
-        // 2. 路由匹配
         else if (server->router) {
           route_node_t *node =
               router_match(server->router, request->method, request->url);
           route_callback_t handler = router_get_callback(node);
-          // 3. 调用处理器
+
           if (node && handler) {
-            // 提取路由参数
             route_params_t params = {0};
-            route_param_t param_storage[16];  // 最多支持 16 个参数
+            route_param_t param_storage[16];
             size_t param_count = 0;
             if (router_extract(node, request->url, param_storage, 16, &param_count) == 0) {
               params.params = param_storage;
               params.count = param_count;
             }
-            
+
             handle_params_t h_params = {.params = &params,
                                         .env = server->env,
                                         .body = request->body,
                                         .body_len = request->body_len};
 
-            // 调用由 lmjcore_handle 实现的函数
             int handler_result = handler(&h_params, &response);
 
-            if (handler_result != 0) {
-              // 处理器返回错误，如果没有设置响应体，则设置默认错误
-              if (response.body == NULL) {
-                response.status_code = 500;
-                response.body = strdup("{\"error\":\"Internal Server Error\"}");
-                response.body_len = strlen(response.body);
-              }
+            if (handler_result != 0 && response.body == NULL) {
+              response.status_code = 500;
+              response.body = strdup("{\"error\":\"Internal Server Error\"}");
+              response.body_len = strlen(response.body);
             }
-
           } else {
-            // 404 Not Found
             response.status_code = 404;
             response.body = strdup("{\"error\":\"Not Found\"}");
             response.body_len = strlen(response.body);
           }
         } else {
-          // 路由器未初始化
           response.status_code = 500;
           response.body = strdup("{\"error\":\"Router not configured\"}");
           response.body_len = strlen(response.body);
         }
       } else {
-        // 获取请求失败
         response.status_code = 500;
         response.body = strdup("{\"error\":\"Failed to get request\"}");
         response.body_len = strlen(response.body);
       }
     } else {
-      // 400 Bad Request - 解析失败
       response.status_code = 400;
       response.body = strdup("{\"error\":\"Bad Request\"}");
       response.body_len = strlen(response.body);
     }
   } else if (bytes_read <= 0) {
-    // 读取请求失败
     response.status_code = 400;
     response.body = strdup("{\"error\":\"Failed to read request\"}");
     response.body_len = strlen(response.body);
   }
 
-  // 确保响应状态码已设置
   if (response.status_code == 0) {
     response.status_code = 200;
   }
 
-  // 4. 构建 HTTP 响应
-  char response_buf[32768]; // 32KB 缓冲区
+  char response_buf[32768];
   int response_len =
       http_build_response(&response, response_buf, sizeof(response_buf));
 
   if (response_len > 0) {
-    // 5. 发送响应
     send_http_response(client_fd, response_buf, response_len);
-
-    // 记录日志
     log_request(method_str, url_str, response.status_code, client_ip);
   } else {
-    // 构建响应失败，发送简单错误响应
     const char *fallback = "HTTP/1.1 500 Internal Server Error\r\n"
                            "Content-Length: 0\r\n"
                            "Connection: close\r\n\r\n";
     send_http_response(client_fd, fallback, strlen(fallback));
-
-    // 记录日志
     log_request(method_str, url_str, response.status_code, client_ip);
   }
 
-  // 6. 清理资源
   http_free_response(&response);
-  http_free_request(request);  // 释放 http_parser_get_request 返回的请求
+  http_free_request(request);
   if (parser_ctx) {
     http_parser_destroy(parser_ctx);
   }

@@ -36,13 +36,12 @@ const char *route_params_get(route_params_t *params, size_t index) {
 
 int json_get_string(const char *json, size_t json_len, const char *key,
                     char **out_value, size_t *out_len) {
-  (void)json_len;  // 未使用参数
+  (void)json_len;
 
   if (!json || !key || !out_value) {
     return -1;
   }
 
-  // 查找 "key":
   char search_pattern[256];
   snprintf(search_pattern, sizeof(search_pattern), "\"%s\"", key);
 
@@ -51,22 +50,20 @@ int json_get_string(const char *json, size_t json_len, const char *key,
     return -1;
   }
 
-  // 跳过 key 和冒号
   const char *p = key_pos + strlen(search_pattern);
   while (*p && (*p == ':' || *p == ' ' || *p == '\t')) {
     p++;
   }
 
   if (*p != '"') {
-    return -1; // 不是字符串值
+    return -1;
   }
-  p++; // 跳过开引号
+  p++;
 
-  // 找到闭引号
   const char *start = p;
   while (*p && *p != '"') {
     if (*p == '\\' && *(p + 1)) {
-      p += 2; // 跳过转义字符
+      p += 2;
     } else {
       p++;
     }
@@ -354,50 +351,4 @@ void lmjcore_free_path_parse_result(char *start_ptr, char **segments,
     free(segments[i]);
   }
   free(segments);
-}
-
-// ==================== 响应释放函数 ====================
-
-void lmjcore_free_member_responses(member_response_t *members, size_t count) {
-  if (!members) {
-    return;
-  }
-
-  for (size_t i = 0; i < count; i++) {
-    free(members[i].member_name);
-    free(members[i].value);
-  }
-  free(members);
-}
-
-void lmjcore_free_element_responses(element_response_t *elements,
-                                    size_t count) {
-  if (!elements) {
-    return;
-  }
-
-  for (size_t i = 0; i < count; i++) {
-    free(elements[i].value);
-  }
-  free(elements);
-}
-
-void lmjcore_free_object_response(object_response_t *response) {
-  if (!response) {
-    return;
-  }
-
-  free(response->ptr);
-  lmjcore_free_member_responses(response->members, response->member_count);
-  memset(response, 0, sizeof(object_response_t));
-}
-
-void lmjcore_free_set_response(set_response_t *response) {
-  if (!response) {
-    return;
-  }
-
-  free(response->ptr);
-  lmjcore_free_element_responses(response->elements, response->element_count);
-  memset(response, 0, sizeof(set_response_t));
 }

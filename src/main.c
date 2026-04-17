@@ -17,7 +17,7 @@ static void signal_handler(int sig) {
   }
 }
 
-int main(int argc, char *argv[]) {
+int main(void) {
   // 设置信号处理
   signal(SIGINT, signal_handler);
   signal(SIGTERM, signal_handler);

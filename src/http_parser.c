@@ -22,7 +22,7 @@ typedef enum {
   LOCAL_HTTP_OPTIONS = 6
 } local_http_method_t;
 
-// 本地请求结构
+// 本地请求结构（内部使用）
 typedef struct {
   local_http_method_t method;
   char *url;
@@ -32,17 +32,6 @@ typedef struct {
   char *content_length;
   char *host;
 } local_http_request_t;
-
-// 公开请求结构（与 router.h 的 http_method_t 兼容）
-typedef struct {
-  int method; // 使用 int 而不是 http_method_t 以避免包含 router.h
-  char *url;
-  char *body;
-  size_t body_len;
-  char *content_type;
-  char *content_length;
-  char *host;
-} public_http_request_t;
 
 // 解析器上下文结构
 typedef struct http_parser_context {
@@ -57,12 +46,23 @@ typedef struct http_parser_context {
   int parsing_header;
 } http_parser_context_t;
 
-// 公开响应结构
+// 公开响应结构（与 http_parser.h 一致）
 typedef struct {
   int status_code;
   char *body;
   size_t body_len;
 } http_response_t;
+
+// 公开请求结构（与 http_parser.h 一致）
+typedef struct {
+  int method;
+  char *url;
+  char *body;
+  size_t body_len;
+  char *content_type;
+  char *content_length;
+  char *host;
+} http_request_t;
 
 // ==================== llhttp 回调函数 ====================
 
@@ -165,30 +165,21 @@ static int on_message_complete(llhttp_t *parser) {
  */
 static local_http_method_t llhttp_method_to_local(llhttp_method_t method) {
   switch (method) {
-  case 1:
-    return LOCAL_HTTP_GET; // llhttp HTTP_GET
-  case 3:
-    return LOCAL_HTTP_POST; // llhttp HTTP_POST
-  case 4:
-    return LOCAL_HTTP_PUT; // llhttp HTTP_PUT
-  case 0:
-    return LOCAL_HTTP_DELETE; // llhttp HTTP_DELETE
-  case 28:
-    return LOCAL_HTTP_PATCH; // llhttp HTTP_PATCH
-  case 2:
-    return LOCAL_HTTP_HEAD; // llhttp HTTP_HEAD
-  case 6:
-    return LOCAL_HTTP_OPTIONS; // llhttp HTTP_OPTIONS
-  default:
-    return LOCAL_HTTP_GET;
+  case 1:  return LOCAL_HTTP_GET;       // llhttp HTTP_GET
+  case 3:  return LOCAL_HTTP_POST;      // llhttp HTTP_POST
+  case 4:  return LOCAL_HTTP_PUT;       // llhttp HTTP_PUT
+  case 0:  return LOCAL_HTTP_DELETE;    // llhttp HTTP_DELETE
+  case 28: return LOCAL_HTTP_PATCH;     // llhttp HTTP_PATCH
+  case 2:  return LOCAL_HTTP_HEAD;      // llhttp HTTP_HEAD
+  case 6:  return LOCAL_HTTP_OPTIONS;   // llhttp HTTP_OPTIONS
+  default: return LOCAL_HTTP_GET;
   }
 }
 
 // ==================== 公开 API 实现 ====================
 
 void http_parser_create(http_parser_context_t **ctx_out) {
-  if (!ctx_out)
-    return;
+  if (!ctx_out) return;
 
   http_parser_context_t *ctx =
       (http_parser_context_t *)calloc(1, sizeof(http_parser_context_t));
@@ -204,9 +195,8 @@ void http_parser_create(http_parser_context_t **ctx_out) {
     *ctx_out = NULL;
     return;
   }
-  
-  llhttp_settings_init(settings);
 
+  llhttp_settings_init(settings);
   settings->on_url = on_url;
   settings->on_body = on_body;
   settings->on_header_field = on_header_field;
@@ -214,7 +204,6 @@ void http_parser_create(http_parser_context_t **ctx_out) {
   settings->on_message_complete = on_message_complete;
 
   llhttp_init(&ctx->parser, HTTP_REQUEST, settings);
-
   ctx->parser.data = ctx;
   ctx->local_request =
       (local_http_request_t *)calloc(1, sizeof(local_http_request_t));
@@ -224,9 +213,7 @@ void http_parser_create(http_parser_context_t **ctx_out) {
 
 int http_parser_execute(http_parser_context_t *ctx, const char *data,
                         size_t data_len) {
-  if (!ctx || !data || data_len == 0) {
-    return -1;
-  }
+  if (!ctx || !data || data_len == 0) return -1;
 
   enum llhttp_errno err = llhttp_execute(&ctx->parser, data, data_len);
 
@@ -243,20 +230,14 @@ int http_parser_execute(http_parser_context_t *ctx, const char *data,
   }
 }
 
-/**
- * @brief 内部请求结构转换为公开请求结构
- */
-static public_http_request_t *
-convert_to_public_request(local_http_request_t *local_req) {
-  if (!local_req)
-    return NULL;
+http_request_t *http_parser_get_request(http_parser_context_t *ctx) {
+  if (!ctx || !ctx->local_request) return NULL;
 
-  public_http_request_t *pub_req =
-      (public_http_request_t *)calloc(1, sizeof(public_http_request_t));
-  if (!pub_req)
-    return NULL;
+  local_http_request_t *local_req = ctx->local_request;
+  http_request_t *pub_req =
+      (http_request_t *)calloc(1, sizeof(http_request_t));
+  if (!pub_req) return NULL;
 
-  // 直接复制值（因为枚举值已转换过，与 router.h 一致）
   pub_req->method = (int)local_req->method;
   pub_req->url = local_req->url ? strdup(local_req->url) : NULL;
   pub_req->body = local_req->body ? strdup(local_req->body) : NULL;
@@ -270,18 +251,10 @@ convert_to_public_request(local_http_request_t *local_req) {
   return pub_req;
 }
 
-public_http_request_t *http_parser_get_request(http_parser_context_t *ctx) {
-  if (!ctx || !ctx->local_request)
-    return NULL;
-  return convert_to_public_request(ctx->local_request);
-}
-
 void http_parser_reset(http_parser_context_t *ctx) {
-  if (!ctx)
-    return;
+  if (!ctx) return;
 
   llhttp_reset(&ctx->parser);
-
   ctx->url_buf[0] = '\0';
   ctx->url_len = 0;
   ctx->header_key[0] = '\0';
@@ -290,7 +263,6 @@ void http_parser_reset(http_parser_context_t *ctx) {
   ctx->current_header_value_len = 0;
   ctx->parsing_header = 0;
 
-  // 释放请求资源
   if (ctx->local_request) {
     free(ctx->local_request->url);
     free(ctx->local_request->body);
@@ -302,10 +274,8 @@ void http_parser_reset(http_parser_context_t *ctx) {
 }
 
 void http_parser_destroy(http_parser_context_t *ctx) {
-  if (!ctx)
-    return;
+  if (!ctx) return;
 
-  // 释放 llhttp settings（在 http_parser_create 中分配）
   if (ctx->parser.settings) {
     free((void *)ctx->parser.settings);
   }
@@ -321,34 +291,23 @@ void http_parser_destroy(http_parser_context_t *ctx) {
   free(ctx);
 }
 
-const char *get_status_text(int status_code) {
+static const char *get_status_text(int status_code) {
   switch (status_code) {
-  case 200:
-    return "OK";
-  case 201:
-    return "Created";
-  case 204:
-    return "No Content";
-  case 400:
-    return "Bad Request";
-  case 404:
-    return "Not Found";
-  case 405:
-    return "Method Not Allowed";
-  case 408:
-    return "Request Timeout";
-  case 500:
-    return "Internal Server Error";
-  default:
-    return "Unknown";
+  case 200: return "OK";
+  case 201: return "Created";
+  case 204: return "No Content";
+  case 400: return "Bad Request";
+  case 404: return "Not Found";
+  case 405: return "Method Not Allowed";
+  case 408: return "Request Timeout";
+  case 500: return "Internal Server Error";
+  default:  return "Unknown";
   }
 }
 
 int http_build_response(const http_response_t *response, char *out_buf,
                         size_t out_buf_size) {
-  if (!response || !out_buf || out_buf_size == 0) {
-    return -1;
-  }
+  if (!response || !out_buf || out_buf_size == 0) return -1;
 
   const char *status_text = get_status_text(response->status_code);
   int written = 0;
@@ -378,36 +337,26 @@ int http_build_response(const http_response_t *response, char *out_buf,
                        response->status_code, status_text);
   }
 
-  if (written < 0 || (size_t)written >= out_buf_size) {
-    return -2;
-  }
-
+  if (written < 0 || (size_t)written >= out_buf_size) return -2;
   return written;
 }
 
-void http_free_request(public_http_request_t *request) {
-  if (request) {
-    free(request->url);
-    request->url = NULL;
-    free(request->body);
-    request->body = NULL;
-    free(request->content_type);
-    request->content_type = NULL;
-    free(request->content_length);
-    request->content_length = NULL;
-    free(request->host);
-    request->host = NULL;
-    request->body_len = 0;
-    request->method = 0;
-    free(request);
-  }
+void http_free_request(http_request_t *request) {
+  if (!request) return;
+
+  free(request->url);
+  free(request->body);
+  free(request->content_type);
+  free(request->content_length);
+  free(request->host);
+  free(request);
 }
 
 void http_free_response(http_response_t *response) {
-  if (response) {
-    free(response->body);
-    response->body = NULL;
-    response->body_len = 0;
-    response->status_code = 0;
-  }
+  if (!response) return;
+
+  free(response->body);
+  response->body = NULL;
+  response->body_len = 0;
+  response->status_code = 0;
 }

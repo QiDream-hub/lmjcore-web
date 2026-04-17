@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <sys/time.h>
+#include <time.h>
 
 // ==================== 全局状态 ====================
 

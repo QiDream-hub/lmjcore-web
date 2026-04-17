@@ -31,10 +31,53 @@ make
 ### 运行
 
 ```bash
+# 使用默认配置启动
 ./lmjcore_server
+
+# 指定端口和数据库路径
+./lmjcore_server -p 9000 -d /data/lmjcore
+
+# 使用配置文件
+./lmjcore_server -C /etc/lmjcore.conf
+
+# 守护进程模式
+./lmjcore_server --daemon
+
+# 查看帮助
+./lmjcore_server --help
 ```
 
 服务器默认启动在 `http://localhost:8080`
+
+---
+
+## 📋 配置方式
+
+LMJCore-Web 支持多种配置方式：
+
+| 方式 | 说明 | 优先级 |
+|------|------|--------|
+| 命令行参数 | `-p 9000 -d /data/lmjcore` | 最高 |
+| 配置文件 | `lmjcore.conf` INI 格式 | 中 |
+| 默认值 | 内置默认配置 | 最低 |
+
+**示例配置文件** (`lmjcore.conf`)：
+
+```ini
+# 网络配置
+host = 0.0.0.0
+port = 8080
+
+# 数据库配置
+db_path = ./lmjcore_data
+map_size = 10M
+
+# 运行模式
+daemon = false
+log_level = 1
+```
+
+详细配置请参考 [设计文档](doc/lmjcore-web/lmjcore_web.md#7-配置管理)
 
 ---
 
@@ -136,6 +179,7 @@ lmjcore-web/
 ├── doc/                    # 文档
 │   └── lmjcore-web/        # 详细设计文档
 ├── include/                # 头文件
+│   ├── config.h            # 配置管理
 │   ├── error_codes.h       # 错误码定义
 │   ├── error_response.h    # 错误响应构建
 │   ├── handle_utils.h      # 工具函数
@@ -144,6 +188,7 @@ lmjcore-web/
 │   ├── lmjcore_handle.h    # 处理器声明
 │   └── routes.h            # 路由注册
 ├── src/                    # 源代码
+│   ├── config.c            # 配置解析
 │   ├── handlers/           # 处理器模块
 │   │   ├── obj_handle.c    # 对象处理器
 │   │   ├── set_handle.c    # 集合处理器
@@ -153,6 +198,7 @@ lmjcore-web/
 │   ├── http_server.c
 │   ├── main.c
 │   └── routes.c
+├── lmjcore.conf            # 示例配置文件
 └── thirdparty/             # 第三方依赖
     ├── LMJCore/
     └── URLRouter/
@@ -160,15 +206,20 @@ lmjcore-web/
 
 ---
 
-## ⚙️ 配置选项
+## ⚙️ 命令行选项
 
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `host` | `0.0.0.0` | 监听地址 |
-| `port` | `8080` | 监听端口 |
-| `db_path` | `./lmjcore_data` | 数据库路径 |
-| `map_size` | `10MB` | 内存映射大小 |
-| `max_connections` | `128` | 最大连接数 |
+| 参数 | 简写 | 默认值 | 说明 |
+|------|------|--------|------|
+| `--host` | `-H` | `0.0.0.0` | 监听地址 |
+| `--port` | `-p` | `8080` | 监听端口 |
+| `--db-path` | `-d` | `./lmjcore_data` | 数据库路径 |
+| `--map-size` | `-m` | `10M` | 内存映射大小 (支持 K/M/G) |
+| `--max-connections` | `-c` | `128` | 最大连接数 |
+| `--txn-timeout` | `-t` | `5` | 事务超时 (秒) |
+| `--config` | `-C` | `lmjcore.conf` | 配置文件路径 |
+| `--daemon` | `-D` | `false` | 守护进程模式 |
+| `--log-level` | `-l` | `1` | 日志级别 (0-3) |
+| `--help` | `-h` | - | 显示帮助 |
 
 ---
 

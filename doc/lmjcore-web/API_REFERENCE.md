@@ -1,5 +1,35 @@
 # LMJCore-Web API 参考文档
 
+## 快速开始
+
+### 启动服务器
+
+```bash
+# 使用默认配置启动
+./lmjcore_server
+
+# 指定端口
+./lmjcore_server -p 9000
+
+# 使用配置文件
+./lmjcore_server -C /etc/lmjcore.conf
+
+# 查看帮助
+./lmjcore_server --help
+```
+
+### 配置说明
+
+| 配置方式 | 说明 |
+|----------|------|
+| 命令行参数 | 最高优先级，支持 `-p`, `-d`, `-C` 等 |
+| 配置文件 | `lmjcore.conf` INI 格式 |
+| 默认值 | 内置默认配置 |
+
+详细配置请参考 [设计文档](./lmjcore_web.md#7-配置管理)
+
+---
+
 ## API 概览
 
 | 类别 | 端点数量 | 说明 |

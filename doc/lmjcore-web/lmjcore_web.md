@@ -291,9 +291,104 @@ RETURN_ERROR_BODY_PARSE(response);         // 请求体解析失败
 
 ---
 
-## 7. 配置参数
+## 7. 配置管理
 
-### 7.1 服务器配置
+### 7.1 配置方式
+
+LMJCore-Web 支持三种配置方式，优先级从高到低为：
+
+1. **命令行参数** - 最高优先级，直接覆盖其他配置
+2. **配置文件** - 推荐方式，便于管理和版本控制
+3. **默认值** - 内置默认配置
+
+### 7.2 命令行参数
+
+```bash
+./lmjcore_server [OPTIONS]
+```
+
+| 参数 | 简写 | 说明 | 默认值 |
+|------|------|------|--------|
+| `--host <addr>` | `-H` | 监听地址 | `0.0.0.0` |
+| `--port <port>` | `-p` | 监听端口 | `8080` |
+| `--db-path <path>` | `-d` | LMDB 数据库路径 | `./lmjcore_data` |
+| `--map-size <size>` | `-m` | 内存映射大小 (支持 K/M/G 后缀) | `10M` |
+| `--max-connections <n>` | `-c` | 最大连接数 | `128` |
+| `--txn-timeout <sec>` | `-t` | 事务超时 (秒) | `5` |
+| `--config <file>` | `-C` | 配置文件路径 | `lmjcore.conf` |
+| `--daemon` | `-D` | 守护进程模式 | `false` |
+| `--log-level <0-3>` | `-l` | 日志级别 (0=DEBUG, 3=ERROR) | `1` |
+| `--help` | `-h` | 显示帮助信息 | - |
+
+**使用示例**：
+
+```bash
+# 快速启动（使用默认配置）
+./lmjcore_server
+
+# 指定端口和数据库路径
+./lmjcore_server -p 9000 -d /data/lmjcore
+
+# 使用配置文件并以后台模式运行
+./lmjcore_server -C /etc/lmjcore.conf --daemon
+
+# 调试模式（显示详细配置）
+./lmjcore_server -l 0
+```
+
+### 7.3 配置文件
+
+配置文件采用简单的 `key = value` 格式，支持 `#` 和 `;` 注释。
+
+**示例配置文件** (`lmjcore.conf`)：
+
+```ini
+# ===========================================
+# LMJCore-Web 配置文件
+# ===========================================
+
+# ----------------------------
+# 网络配置
+# ----------------------------
+
+# 监听地址 (默认：0.0.0.0)
+host = 0.0.0.0
+
+# 监听端口 (默认：8080)
+port = 8080
+
+# ----------------------------
+# 数据库配置
+# ----------------------------
+
+# LMDB 数据库存储路径 (默认：./lmjcore_data)
+db_path = ./lmjcore_data
+
+# 内存映射大小 (默认：10MB，支持 K/M/G 后缀)
+map_size = 10M
+
+# ----------------------------
+# 连接配置
+# ----------------------------
+
+# 最大并发连接数 (默认：128)
+max_connections = 128
+
+# 事务超时时间 (秒) (默认：5 秒)
+txn_timeout = 5
+
+# ----------------------------
+# 运行模式配置
+# ----------------------------
+
+# 是否以守护进程模式运行 (默认：false)
+daemon = false
+
+# 日志级别 (0=DEBUG, 1=INFO, 2=WARN, 3=ERROR)
+log_level = 1
+```
+
+### 7.4 服务器配置结构
 
 ```c
 typedef struct {
@@ -307,15 +402,17 @@ typedef struct {
 } server_config_t;
 ```
 
-### 7.2 默认配置
+### 7.5 默认配置值
 
-| 参数 | 默认值 |
-|------|--------|
-| 监听地址 | `0.0.0.0` |
-| 监听端口 | `8080` |
-| 数据库路径 | `./lmjcore_data` |
-| 内存映射 | `10MB` |
-| 最大连接数 | `128` |
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| 监听地址 | `0.0.0.0` | 监听所有网络接口 |
+| 监听端口 | `8080` | HTTP 服务端口 |
+| 数据库路径 | `./lmjcore_data` | LMDB 数据目录 |
+| 内存映射 | `10MB` | LMDB 映射大小 |
+| 最大连接数 | `128` | 并发连接上限 |
+| 事务超时 | `5 秒` | 请求级事务超时 |
+| 日志级别 | `INFO` | 1=INFO |
 
 ---
 
@@ -395,7 +492,76 @@ target_link_libraries(lmjcore_server
 
 ---
 
-## 10. 设计原则
+## 10. 部署指南
+
+### 10.1 生产环境部署
+
+** systemd 服务配置** (`/etc/systemd/system/lmjcore.service`)：
+
+```ini
+[Unit]
+Description=LMJCore HTTP Server
+After=network.target
+
+[Service]
+Type=simple
+User=lmjcore
+Group=lmjcore
+WorkingDirectory=/opt/lmjcore
+ExecStart=/opt/lmjcore/lmjcore_server -C /etc/lmjcore.conf
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**启用服务**：
+
+```bash
+# 创建用户
+sudo useradd -r -s /bin/false lmjcore
+
+# 安装文件
+sudo mkdir -p /opt/lmjcore
+sudo cp build/lmjcore_server /opt/lmjcore/
+sudo cp lmjcore.conf /etc/lmjcore.conf
+
+# 设置权限
+sudo chown -R lmjcore:lmjcore /opt/lmjcore
+
+# 启用服务
+sudo systemctl daemon-reload
+sudo systemctl enable lmjcore
+sudo systemctl start lmjcore
+
+# 检查状态
+sudo systemctl status lmjcore
+```
+
+### 10.2 守护进程模式
+
+也可直接使用内置的守护进程模式：
+
+```bash
+./lmjcore_server --config /etc/lmjcore.conf --daemon
+```
+
+### 10.3 日志管理
+
+日志级别说明：
+
+| 级别 | 值 | 说明 |
+|------|-----|------|
+| DEBUG | 0 | 详细调试信息（开发环境） |
+| INFO  | 1 | 一般信息（生产环境推荐） |
+| WARN  | 2 | 警告信息 |
+| ERROR | 3 | 仅错误信息 |
+
+---
+
+## 11. 设计原则
 
 1. **保持简单**: 只做基础 CRUD，不实现复杂查询
 2. **透明存储**: 客户端感知指针和类型
@@ -405,7 +571,7 @@ target_link_libraries(lmjcore_server
 
 ---
 
-## 11. 未来扩展
+## 12. 未来扩展
 
 | 功能 | 状态 | 说明 |
 |------|------|------|
@@ -467,6 +633,48 @@ llhttp 库已通过系统包管理器安装：
 
 ---
 
-## 14. 参考文档
+## 14. 项目结构
+
+```
+lmjcore-web/
+├── CMakeLists.txt          # CMake 构建配置
+├── README.md               # 项目说明文档
+├── lmjcore.conf            # 示例配置文件
+├── QWEN.md                 # 开发上下文文档
+├── compile_commands.json   # 编译数据库 (LSP 使用)
+├── doc/                    # 详细设计文档
+│   └── lmjcore-web/
+│       ├── lmjcore_web.md      # 架构设计文档
+│       └── API_REFERENCE.md    # API 参考文档
+├── include/                # 公共头文件
+│   ├── config.h            # 配置管理接口
+│   ├── error_codes.h       # 错误码定义与 HTTP 映射
+│   ├── error_response.h    # 统一错误响应构建宏
+│   ├── handle_utils.h      # 工具函数声明
+│   ├── http_parser.h       # HTTP 解析器接口
+│   ├── http_server.h       # HTTP 服务器接口
+│   ├── lmjcore_handle.h    # 处理器声明 (聚合头文件)
+│   └── routes.h            # 路由注册接口
+├── src/                    # 源代码
+│   ├── main.c              # 程序入口
+│   ├── config.c            # 配置解析实现
+│   ├── routes.c            # 路由注册
+│   ├── http_server.c       # HTTP 服务器实现
+│   ├── http_parser.c       # HTTP 解析器实现 (基于 llhttp)
+│   └── handlers/           # 处理器模块
+│       ├── obj_handle.c    # 对象 CRUD 处理器
+│       ├── set_handle.c    # 集合 CRUD 处理器
+│       ├── utils_handle.c  # 工具接口处理器
+│       └── handle_utils.c  # 通用工具函数
+├── tests/                  # 测试文件
+│   └── api_test.html       # API 测试工具 (浏览器)
+└── thirdparty/             # 第三方子模块
+    ├── LMJCore/            # LMJCore 存储引擎
+    └── URLRouter/          # URL 路由库
+```
+
+---
+
+## 15. 参考文档
 
 - [API 参考文档](./API_REFERENCE.md) - 完整 API 文档

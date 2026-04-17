@@ -1,6 +1,7 @@
 #include "http_server.h"
 #include "routes.h"
 #include "config.h"
+#include "log.h"
 #include "lmjcore_uuid_gen.h"
 #include <signal.h>
 #include <stdio.h>
@@ -16,7 +17,7 @@ static http_server_t *g_server = NULL;
 // 信号处理函数
 static void signal_handler(int sig) {
   if (sig == SIGINT || sig == SIGTERM) {
-    printf("\nReceived signal %d, shutting down...\n", sig);
+    LOG_INFO("Received signal %d, shutting down...", sig);
     if (g_server) {
       http_server_stop(g_server);
     }
@@ -32,7 +33,7 @@ static void daemonize(void) {
   // 第一次 fork，创建子进程并退出父进程
   pid = fork();
   if (pid < 0) {
-    fprintf(stderr, "Failed to fork\n");
+    LOG_ERROR("Failed to fork");
     exit(1);
   }
   if (pid > 0) {
@@ -42,14 +43,14 @@ static void daemonize(void) {
 
   // 创建新会话
   if (setsid() < 0) {
-    fprintf(stderr, "Failed to setsid\n");
+    LOG_ERROR("Failed to setsid");
     exit(1);
   }
 
   // 第二次 fork，确保不会是会话首领
   pid = fork();
   if (pid < 0) {
-    fprintf(stderr, "Failed to fork\n");
+    LOG_ERROR("Failed to fork");
     exit(1);
   }
   if (pid > 0) {
@@ -76,7 +77,7 @@ int main(int argc, char **argv) {
 
   // 解析命令行参数 (优先)
   if (config_parse_args(&config, argc, argv) != 0) {
-    fprintf(stderr, "Failed to parse command line arguments\n");
+    LOG_ERROR("Failed to parse command line arguments");
     config_print_usage(argv[0]);
     return 1;
   }
@@ -91,14 +92,17 @@ int main(int argc, char **argv) {
     config_load(&config, config.config_path);
   }
 
+  // 初始化日志系统
+  log_init((log_level_t)config.log_level, !config.daemon);
+
   // 打印配置信息 (调试模式)
-  if (config.log_level <= 0) {  // DEBUG
+  if (config.log_level <= LOG_DEBUG) {
     config_print(&config);
   }
 
   // 守护进程模式
   if (config.daemon) {
-    printf("Starting daemon mode...\n");
+    LOG_INFO("Starting daemon mode...");
     daemonize();
   }
 
@@ -110,7 +114,7 @@ int main(int argc, char **argv) {
   server_config_t server_config;
   memset(&server_config, 0, sizeof(server_config_t));
   if (config_to_server_config(&config, &server_config) != 0) {
-    fprintf(stderr, "Failed to convert config\n");
+    LOG_ERROR("Failed to convert config");
     return 1;
   }
 
@@ -120,7 +124,7 @@ int main(int argc, char **argv) {
   // 初始化服务器
   http_server_t server;
   if (http_server_init(&server, &server_config) != 0) {
-    fprintf(stderr, "Failed to initialize server\n");
+    LOG_ERROR("Failed to initialize server");
     return 1;
   }
 
@@ -129,7 +133,7 @@ int main(int argc, char **argv) {
   // 创建路由器
   router_t *router = router_create();
   if (!router) {
-    fprintf(stderr, "Failed to create router\n");
+    LOG_ERROR("Failed to create router");
     http_server_destroy(&server);
     return 1;
   }
@@ -139,17 +143,17 @@ int main(int argc, char **argv) {
 
   // 注册路由
   if (register_all_routes(router) != 0) {
-    fprintf(stderr, "Failed to setup routes\n");
+    LOG_ERROR("Failed to setup routes");
     router_destroy(router);
     http_server_destroy(&server);
     return 1;
   }
 
   // 启动服务器（阻塞）
-  printf("Starting LMJCore HTTP Server on %s:%d ...\n", config.host, config.port);
-  printf("Database path: %s\n", config.db_path);
+  LOG_INFO("Starting LMJCore HTTP Server on %s:%d ...", config.host, config.port);
+  LOG_INFO("Database path: %s", config.db_path);
   if (config.daemon) {
-    printf("Running in daemon mode\n");
+    LOG_INFO("Running in daemon mode");
   }
   int rc = http_server_start(&server);
 

@@ -6,6 +6,7 @@
  */
 
 #include <llhttp.h>
+#include "log.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -223,9 +224,9 @@ int http_parser_execute(http_parser_context_t *ctx, const char *data,
   } else if (err == HPE_PAUSED) {
     return 0;
   } else {
-    fprintf(stderr, "HTTP 解析错误：%s (%d) at position %ld\n",
-            llhttp_errno_name(err), err,
-            llhttp_get_error_pos(&ctx->parser) - data);
+    LOG_ERROR("HTTP 解析错误：%s (%d) at position %ld",
+              llhttp_errno_name(err), err,
+              llhttp_get_error_pos(&ctx->parser) - data);
     return -1;
   }
 }

@@ -63,6 +63,7 @@ set(SERVER_SOURCES
     ${SERVER_SRC_DIR}/main.c
     ${SERVER_SRC_DIR}/routes.c
     ${SERVER_SRC_DIR}/config.c
+    ${SERVER_SRC_DIR}/log.c
     ${SERVER_SRC_DIR}/http_server.c
     ${SERVER_SRC_DIR}/http_parser.c
     ${SERVER_SRC_DIR}/handlers/obj_handle.c

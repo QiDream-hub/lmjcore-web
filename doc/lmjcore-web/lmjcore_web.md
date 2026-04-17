@@ -550,14 +550,50 @@ sudo systemctl status lmjcore
 
 ### 10.3 日志管理
 
-日志级别说明：
+LMJCore-Web 内置了统一的日志系统，支持级别控制和彩色输出。
 
-| 级别 | 值 | 说明 |
-|------|-----|------|
-| DEBUG | 0 | 详细调试信息（开发环境） |
-| INFO  | 1 | 一般信息（生产环境推荐） |
-| WARN  | 2 | 警告信息 |
-| ERROR | 3 | 仅错误信息 |
+**日志级别**：
+
+| 级别 | 值 | 说明 | 输出内容 |
+|------|-----|------|----------|
+| DEBUG | 0 | 调试信息 | 所有日志 |
+| INFO  | 1 | 一般信息 | INFO 及以上 |
+| WARN  | 2 | 警告信息 | WARN 及以上 |
+| ERROR | 3 | 错误信息 | 仅 ERROR |
+
+**日志格式**：
+
+```
+[时间戳] 级别 [文件：行号] 消息
+```
+
+**示例输出**：
+
+```
+[2026-04-17 21:07:35.883] INFO  [routes.c:90] Routes registered successfully:
+[2026-04-17 21:07:37.710] INFO  [http_server.c:51] 127.0.0.1 - GET /health -> 200
+[2026-04-17 21:07:37.714] WARN  [http_server.c:49] 127.0.0.1 - GET /invalid -> 404
+```
+
+**配置方式**：
+
+```bash
+# 命令行设置日志级别
+./lmjcore_server -l 0  # DEBUG
+./lmjcore_server -l 1  # INFO (默认)
+./lmjcore_server -l 2  # WARN
+./lmjcore_server -l 3  # ERROR
+
+# 配置文件设置
+log_level = 1  # 在 lmjcore.conf 中
+```
+
+**特性**：
+
+- 自动彩色输出（终端模式下）
+- 警告和错误自动输出到 stderr
+- 守护进程模式自动禁用颜色
+- 线程安全的日志输出
 
 ---
 

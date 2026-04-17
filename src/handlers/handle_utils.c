@@ -9,21 +9,27 @@
 // ==================== 路由参数辅助函数 ====================
 
 const char *route_params_get(route_params_t *params, size_t index) {
-  static __thread char param_buf[1024];
+  // 使用线程局部存储的多个缓冲区，支持最多 4 个参数同时使用
+  static __thread char param_bufs[4][1024];
+  static __thread int current_buf = 0;
 
   if (!params || index >= params->count) {
     return NULL;
   }
 
   route_param_t param = params->params[index];
-  if (param.len >= sizeof(param_buf) - 1) {
+  if (param.len >= sizeof(param_bufs[0]) - 1) {
     return NULL; // 参数太长
   }
 
-  memcpy(param_buf, param.ptr, param.len);
-  param_buf[param.len] = '\0';
+  // 循环使用 4 个缓冲区
+  int buf_index = current_buf % 4;
+  current_buf++;
 
-  return param_buf;
+  memcpy(param_bufs[buf_index], param.ptr, param.len);
+  param_bufs[buf_index][param.len] = '\0';
+
+  return param_bufs[buf_index];
 }
 
 // ==================== JSON 解析辅助函数 ====================

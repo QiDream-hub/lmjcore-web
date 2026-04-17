@@ -52,7 +52,9 @@ int register_all_routes(router_t *router) {
   }
 
   // GET /obj/query - 链式查询
-  if (router_register(router, HTTP_GET, "/$'obj'/$'query?path='${}",
+  // 使用 URL 路径方式：/obj/query/{path}
+  // 例如：/obj/query/01abc...friend.name
+  if (router_register(router, HTTP_GET, "/$'obj'/$'query'/${}",
                       handle_obj_query, NULL) != 0) {
     fprintf(stderr, "Failed to register GET /obj/query\n");
     return -1;

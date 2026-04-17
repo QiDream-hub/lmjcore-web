@@ -218,12 +218,20 @@ static THREAD_RETURN_TYPE handle_connection_thread(void *arg) {
 
         // 2. 路由匹配
         if (server->router) {
-          route_params_t params = {0};
           route_node_t *node =
               router_match(server->router, request->method, request->url);
           route_callback_t handler = router_get_callback(node);
           // 3. 调用处理器
           if (node && handler) {
+            // 提取路由参数
+            route_params_t params = {0};
+            route_param_t param_storage[16];  // 最多支持 16 个参数
+            size_t param_count = 0;
+            if (router_extract(node, request->url, param_storage, 16, &param_count) == 0) {
+              params.params = param_storage;
+              params.count = param_count;
+            }
+            
             handle_params_t h_params = {.params = &params,
                                         .env = server->env,
                                         .body = request->body,

@@ -413,8 +413,10 @@ int handle_obj_query(void *params, void *cbdata) {
     RETURN_ERROR_INVALID_PARAM(response);
   }
 
-  // 获取 path 参数（从 URL 中提取）
-  const char *path_str = route_params_get(hp->params, 0);
+  // 获取 path 参数（路由模式：/$'obj'/$'query'/${}）
+  // 参数 0: query (固定)
+  // 参数 1: 路径字符串 (例如：01abc...friend.name)
+  const char *path_str = route_params_get(hp->params, 1);
   if (!path_str) {
     RETURN_ERROR_MISSING_PARAM("path", response);
   }
@@ -433,7 +435,7 @@ int handle_obj_query(void *params, void *cbdata) {
 
   // 转换起始指针
   lmjcore_ptr current_ptr;
-  if (lmjcore_ptr_from_string(start_ptr, current_ptr) != LMJCORE_SUCCESS) {
+  if (lmjcore_ptr_from_string(path_str, current_ptr) != LMJCORE_SUCCESS) {
     lmjcore_free_path_parse_result(start_ptr, segments, segment_count);
     RETURN_ERROR_INVALID_PTR(response);
   }

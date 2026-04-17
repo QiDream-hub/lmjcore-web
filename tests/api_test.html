@@ -553,11 +553,27 @@
         function savePtr(type) {
             let ptr;
             if (type === 'obj') {
-                ptr = document.getElementById('createObjPtr')?.value ||
-                    JSON.parse(document.getElementById('createObjResponse')?.textContent || '{}')?.ptr;
+                const responseBox = document.getElementById('createObjResponse');
+                if (responseBox && responseBox.style.display !== 'none') {
+                    try {
+                        const content = responseBox.textContent.trim();
+                        const data = JSON.parse(content.substring(content.indexOf('{')));
+                        ptr = data.ptr;
+                    } catch (e) {
+                        ptr = null;
+                    }
+                }
             } else {
-                ptr = document.getElementById('createSetPtr')?.value ||
-                    JSON.parse(document.getElementById('createSetResponse')?.textContent || '{}')?.ptr;
+                const responseBox = document.getElementById('createSetResponse');
+                if (responseBox && responseBox.style.display !== 'none') {
+                    try {
+                        const content = responseBox.textContent.trim();
+                        const data = JSON.parse(content.substring(content.indexOf('{')));
+                        ptr = data.ptr;
+                    } catch (e) {
+                        ptr = null;
+                    }
+                }
             }
 
             if (ptr) {
@@ -619,11 +635,7 @@
         async function createObject() {
             try {
                 const result = await apiRequest(getBaseUrl() + '/obj', 'POST');
-                console.log(result);
                 showResponse('createObjResponse', result.status, result.statusText, result.data);
-                if (result.status === 201 && result.data.ptr) {
-                    document.getElementById('createObjPtr').value = result.data.ptr;
-                }
             } catch (err) {
                 showResponse('createObjResponse', 0, err.message, { error: err.message }, true);
             }
@@ -723,9 +735,6 @@
             try {
                 const result = await apiRequest(getBaseUrl() + '/set', 'POST');
                 showResponse('createSetResponse', result.status, result.statusText, result.data);
-                if (result.status === 201 && result.data.ptr) {
-                    document.getElementById('createSetPtr').value = result.data.ptr;
-                }
             } catch (err) {
                 showResponse('createSetResponse', 0, err.message, { error: err.message }, true);
             }

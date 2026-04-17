@@ -194,9 +194,8 @@ int lmjcore_decode_value(const uint8_t *data, size_t data_len, char **out_str,
       return LMJCORE_ERROR_MEMORY_ALLOCATION_FAILED;
     }
     lmjcore_ptr_to_hex(data + 1, *out_str);
-    // 根据指针首字节判断类型
-    lmjcore_entity_type etype = (lmjcore_entity_type)data[1];
-    *out_type = (etype == LMJCORE_OBJ) ? VALUE_TYPE_REF : VALUE_TYPE_SET;
+    // 所有指针引用都返回 VALUE_TYPE_REF
+    *out_type = VALUE_TYPE_REF;
     return LMJCORE_SUCCESS;
 
   case LMJCORE_VALUE_TYPE_RAW:

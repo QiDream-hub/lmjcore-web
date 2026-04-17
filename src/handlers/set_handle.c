@@ -140,6 +140,7 @@ int handle_set_get(void *params, void *cbdata) {
 
     const char *type_str = (value_type == VALUE_TYPE_RAW)    ? "raw"
                            : (value_type == VALUE_TYPE_REF)  ? "ref"
+                           : (value_type == VALUE_TYPE_SET)  ? "set"
                            : (value_type == VALUE_TYPE_NULL) ? "null"
                                                              : "unknown";
 

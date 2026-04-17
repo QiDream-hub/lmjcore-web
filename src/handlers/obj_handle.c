@@ -148,6 +148,7 @@ int handle_obj_get(void *params, void *cbdata) {
 
     const char *type_str = (value_type == VALUE_TYPE_RAW)    ? "raw"
                            : (value_type == VALUE_TYPE_REF)  ? "ref"
+                           : (value_type == VALUE_TYPE_SET)  ? "set"
                            : (value_type == VALUE_TYPE_NULL) ? "null"
                                                              : "unknown";
 
@@ -241,6 +242,7 @@ int handle_obj_member_get(void *params, void *cbdata) {
 
   const char *type_str = (value_type == VALUE_TYPE_RAW)    ? "raw"
                          : (value_type == VALUE_TYPE_REF)  ? "ref"
+                         : (value_type == VALUE_TYPE_SET)  ? "set"
                          : (value_type == VALUE_TYPE_NULL) ? "null"
                                                            : "unknown";
 
@@ -532,6 +534,7 @@ int handle_obj_query(void *params, void *cbdata) {
 
   const char *type_str = (current_type == VALUE_TYPE_RAW)    ? "raw"
                          : (current_type == VALUE_TYPE_REF)  ? "ref"
+                         : (current_type == VALUE_TYPE_SET)  ? "set"
                          : (current_type == VALUE_TYPE_NULL) ? "null"
                                                              : "unknown";
 

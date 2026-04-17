@@ -216,8 +216,14 @@ static THREAD_RETURN_TYPE handle_connection_thread(void *arg) {
                                                          : "UNKNOWN";
         url_str = request->url ? request->url : "/";
 
+        // 处理 OPTIONS 预检请求 - 直接返回 204 无内容响应
+        if (request->method == HTTP_OPTIONS) {
+          response.status_code = 204;
+          response.body = NULL;
+          response.body_len = 0;
+        }
         // 2. 路由匹配
-        if (server->router) {
+        else if (server->router) {
           route_node_t *node =
               router_match(server->router, request->method, request->url);
           route_callback_t handler = router_get_callback(node);

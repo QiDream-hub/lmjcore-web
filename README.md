@@ -94,6 +94,8 @@ log_level = 1
 | `DELETE` | `/obj/{ptr}/{member}` | 删除成员 |
 | `GET` | `/obj/query?path=...` | 链式查询 |
 
+> **⚠️ 注意**：删除对象的**最后一个成员**会导致对象本身被删除（继承自 LMDB 的空键自动删除行为）。详见 [API 参考文档](doc/lmjcore-web/API_REFERENCE.md#5-删除成员)
+
 ### 集合操作
 
 | 方法 | 端点 | 说明 |
@@ -102,6 +104,8 @@ log_level = 1
 | `GET` | `/set/{ptr}` | 获取完整集合 |
 | `POST` | `/set/{ptr}/elements` | 添加元素 |
 | `DELETE` | `/set/{ptr}/elements` | 删除元素 |
+
+> **⚠️ 注意**：删除集合的**最后一个元素**会导致集合本身被删除（继承自 LMDB 的空键自动删除行为）。详见 [API 参考文档](doc/lmjcore-web/API_REFERENCE.md#10-删除元素)
 
 ### 工具接口
 

@@ -41,6 +41,12 @@ int register_all_routes(router_t *router) {
     return -1;
   }
 
+  if (router_register(router, HTTP_DELETE, "/$'obj'/${}",
+                      handle_obj_del, NULL) != 0) {
+    LOG_ERROR("Failed to register DELETE /obj/{ptr}");
+    return -1;
+  }
+
   if (router_register(router, HTTP_GET, "/$'obj'/$'query'/${}",
                       handle_obj_query, NULL) != 0) {
     LOG_ERROR("Failed to register GET /obj/query");
@@ -73,6 +79,12 @@ int register_all_routes(router_t *router) {
     return -1;
   }
 
+  if (router_register(router, HTTP_DELETE, "/$'set'/${}",
+                      handle_set_del, NULL) != 0) {
+    LOG_ERROR("Failed to register DELETE /set/{ptr}");
+    return -1;
+  }
+
   // ==================== 工具操作 ====================
 
   if (router_register(router, HTTP_GET, "/$'ptr'/${}/$'exist'",
@@ -93,11 +105,13 @@ int register_all_routes(router_t *router) {
   LOG_INFO("  GET    /obj/{ptr}/{member}");
   LOG_INFO("  PUT    /obj/{ptr}/{member}");
   LOG_INFO("  DELETE /obj/{ptr}/{member}");
+  LOG_INFO("  DELETE /obj/{ptr}");
   LOG_INFO("  GET    /obj/query");
   LOG_INFO("  POST   /set");
   LOG_INFO("  GET    /set/{ptr}");
   LOG_INFO("  POST   /set/{ptr}/elements");
   LOG_INFO("  DELETE /set/{ptr}/elements");
+  LOG_INFO("  DELETE /set/{ptr}");
   LOG_INFO("  GET    /ptr/{ptr}/exist");
   LOG_INFO("  GET    /health");
 

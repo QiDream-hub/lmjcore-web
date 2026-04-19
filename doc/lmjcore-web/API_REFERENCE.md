@@ -34,10 +34,10 @@
 
 | 类别 | 端点数量 | 说明 |
 |------|----------|------|
-| 对象操作 | 6 | 对象的 CRUD 和链式查询 |
-| 集合操作 | 4 | 集合的 CRUD |
+| 对象操作 | 7 | 对象的 CRUD 和链式查询 |
+| 集合操作 | 5 | 集合的 CRUD |
 | 工具接口 | 2 | 健康检查和指针验证 |
-| **总计** | **12** | |
+| **总计** | **14** | |
 
 ---
 
@@ -257,7 +257,46 @@ GET /obj/01abc123...  // → 404 Not Found
 
 ---
 
-### 6. 链式查询
+### 7. 删除完整对象
+
+**请求**
+```http
+DELETE /obj/{ptr}
+```
+
+**路径参数**
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `ptr` | string | 对象指针（34 位十六进制） |
+
+**成功响应**
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "success": true
+}
+```
+
+**说明**
+- 完全删除对象及其所有成员
+- 同时删除 `set` 库中的成员列表和 `main` 库中的所有成员值
+- 删除后该对象指针变为无效
+
+**错误响应**
+```http
+HTTP/1.1 404 Not Found
+Content-Type: application/json
+
+{
+  "error": "Object not found"
+}
+```
+
+---
+
+### 8. 链式查询
 
 **请求**
 ```http
@@ -314,7 +353,7 @@ Content-Type: application/json
 
 ## 集合操作 API
 
-### 7. 创建集合
+### 9. 创建集合
 
 **请求**
 ```http
@@ -337,7 +376,7 @@ Content-Type: application/json
 
 ---
 
-### 8. 获取完整集合
+### 10. 获取完整集合
 
 **请求**
 ```http
@@ -380,7 +419,7 @@ Content-Type: application/json
 
 ---
 
-### 9. 添加元素
+### 11. 添加元素
 
 **请求**
 ```http
@@ -424,7 +463,7 @@ Content-Type: application/json
 
 ---
 
-### 10. 删除元素
+### 12. 删除元素
 
 **请求**
 ```http
@@ -487,9 +526,48 @@ GET /set/02def456...  // → 404 Not Found
 
 ---
 
+### 13. 删除完整集合
+
+**请求**
+```http
+DELETE /set/{ptr}
+```
+
+**路径参数**
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `ptr` | string | 集合指针（34 位十六进制） |
+
+**成功响应**
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "success": true
+}
+```
+
+**说明**
+- 完全删除集合及其所有元素
+- 删除 `set` 库中该集合指针对应的所有元素
+- 删除后该集合指针变为无效
+
+**错误响应**
+```http
+HTTP/1.1 404 Not Found
+Content-Type: application/json
+
+{
+  "error": "Set not found"
+}
+```
+
+---
+
 ## 工具接口 API
 
-### 11. 检查指针是否存在
+### 14. 检查指针是否存在
 
 **请求**
 ```http
@@ -530,7 +608,7 @@ Content-Type: application/json
 
 ---
 
-### 12. 健康检查
+### 15. 健康检查
 
 **请求**
 ```http
@@ -630,6 +708,12 @@ curl http://localhost:8080/ptr/01abc123.../exist
 
 # 9. 健康检查
 curl http://localhost:8080/health
+
+# 10. 删除对象
+curl -X DELETE http://localhost:8080/obj/01abc123...
+
+# 11. 删除集合
+curl -X DELETE http://localhost:8080/set/02def456...
 ```
 
 ### JavaScript 示例

@@ -129,8 +129,8 @@ int handle_set_get(void *params, void *cbdata) {
     return -1;
   }
 
-  // 构建 JSON 响应
-  size_t json_size = 64 + LMJCORE_PTR_STRING_LEN + element_count * 128;
+  // 构建 JSON 响应 - 使用动态扩展策略
+  size_t json_size = 4096;
   char *json_buf = (char *)malloc(json_size);
   if (!json_buf) {
     free(result_buf);
@@ -160,13 +160,58 @@ int handle_set_get(void *params, void *cbdata) {
                            : (value_type == VALUE_TYPE_NULL) ? "null"
                                                              : "unknown";
 
-    offset += snprintf(json_buf + offset, json_size - offset,
+    // 计算所需空间（预留足够余量）
+    size_t needed = strlen(value_str ? value_str : "") + 64;
+    
+    // 检查缓冲区是否需要扩展
+    while ((size_t)offset + needed >= json_size) {
+      json_size *= 2;
+      char *new_buf = (char *)realloc(json_buf, json_size);
+      if (!new_buf) {
+        free(value_str);
+        free(result_buf);
+        free(json_buf);
+        RETURN_ERROR_NO_MEMORY(response);
+      }
+      json_buf = new_buf;
+    }
+
+    int written = snprintf(json_buf + offset, json_size - offset,
                        "%s{\"value\":\"%s\",\"type\":\"%s\"}", i > 0 ? "," : "",
                        value_str ? value_str : "", type_str);
+    
+    if (written < 0 || (size_t)written >= json_size - offset) {
+      // 缓冲区仍然不够，继续扩展
+      json_size *= 2;
+      char *new_buf = (char *)realloc(json_buf, json_size);
+      if (!new_buf) {
+        free(value_str);
+        free(result_buf);
+        free(json_buf);
+        RETURN_ERROR_NO_MEMORY(response);
+      }
+      json_buf = new_buf;
+      written = snprintf(json_buf + offset, json_size - offset,
+                       "%s{\"value\":\"%s\",\"type\":\"%s\"}", i > 0 ? "," : "",
+                       value_str ? value_str : "", type_str);
+    }
+    offset += written;
 
     free(value_str);
   }
 
+  // 确保结尾有足够空间
+  while ((size_t)offset + 32 >= json_size) {
+    json_size *= 2;
+    char *new_buf = (char *)realloc(json_buf, json_size);
+    if (!new_buf) {
+      free(result_buf);
+      free(json_buf);
+      RETURN_ERROR_NO_MEMORY(response);
+    }
+    json_buf = new_buf;
+  }
+  
   offset += snprintf(json_buf + offset, json_size - offset, "],\"count\":%zu}",
                      result_head->element_count);
 
@@ -347,6 +392,61 @@ int handle_set_remove(void *params, void *cbdata) {
   rc = lmjcore_set_remove(txn, set_ptr, encoded_value, encoded_len);
   free(encoded_value);
 
+  if (rc != LMJCORE_SUCCESS) {
+    lmjcore_txn_abort(txn);
+    build_lmjcore_error_response(rc, response);
+    return -1;
+  }
+
+  // 提交事务
+  rc = lmjcore_txn_commit(txn);
+  if (rc != LMJCORE_SUCCESS) {
+    lmjcore_txn_abort(txn);
+    RETURN_ERROR_TXN_FAILED("commit", response);
+  }
+
+  return build_success_response(HTTP_STATUS_OK, "{\"success\":true}", response);
+}
+
+int handle_set_del(void *params, void *cbdata) {
+  handle_params_t *hp = (handle_params_t *)params;
+  http_response_t *response = (http_response_t *)cbdata;
+
+  if (!hp || !hp->env || !hp->params) {
+    RETURN_ERROR_INVALID_PARAM(response);
+  }
+
+  // 获取指针参数
+  const char *ptr_str = route_params_get(hp->params, 0);
+  if (!ptr_str) {
+    RETURN_ERROR_MISSING_PARAM("ptr", response);
+  }
+
+  // 转换指针
+  lmjcore_ptr set_ptr;
+  if (lmjcore_ptr_from_string(ptr_str, set_ptr) != LMJCORE_SUCCESS) {
+    RETURN_ERROR_INVALID_PTR(response);
+  }
+
+  // 开启写事务
+  lmjcore_txn *txn = NULL;
+  int rc = lmjcore_txn_begin(hp->env, NULL, 0, &txn);
+  if (rc != LMJCORE_SUCCESS || !txn) {
+    RETURN_ERROR_TXN_FAILED("begin", response);
+  }
+
+  // 检查事务超时
+  CHECK_TXN_TIMEOUT(hp, response, txn);
+
+  // 检查实体是否存在
+  int exists = lmjcore_entity_exist(txn, set_ptr);
+  if (exists != 1) {
+    lmjcore_txn_abort(txn);
+    RETURN_ERROR_NOT_FOUND("Set", response);
+  }
+
+  // 删除集合
+  rc = lmjcore_set_del(txn, set_ptr);
   if (rc != LMJCORE_SUCCESS) {
     lmjcore_txn_abort(txn);
     build_lmjcore_error_response(rc, response);

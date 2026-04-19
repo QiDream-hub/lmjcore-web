@@ -151,6 +151,7 @@ include/
 | `handle_obj_member_get` | GET | `/obj/{ptr}/{member}` | 获取成员值 |
 | `handle_obj_member_put` | PUT | `/obj/{ptr}/{member}` | 设置成员值 |
 | `handle_obj_member_del` | DELETE | `/obj/{ptr}/{member}` | 删除成员 |
+| `handle_obj_del` | DELETE | `/obj/{ptr}` | 删除完整对象 |
 | `handle_obj_query` | GET | `/obj/query?path=...` | 链式查询 |
 
 #### 3.3.2 集合处理器 (`set_handle.c`)
@@ -161,6 +162,7 @@ include/
 | `handle_set_get` | GET | `/set/{ptr}` | 获取完整集合 |
 | `handle_set_add` | POST | `/set/{ptr}/elements` | 添加元素 |
 | `handle_set_remove` | DELETE | `/set/{ptr}/elements` | 删除元素 |
+| `handle_set_del` | DELETE | `/set/{ptr}` | 删除完整集合 |
 
 #### 3.3.3 工具处理器 (`utils_handle.c`)
 

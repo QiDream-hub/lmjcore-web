@@ -35,6 +35,11 @@ int handle_obj_member_put(void *params, void *cbdata);
 int handle_obj_member_del(void *params, void *cbdata);
 
 /**
+ * @brief DELETE /obj/{ptr} - 删除完整对象
+ */
+int handle_obj_del(void *params, void *cbdata);
+
+/**
  * @brief GET /obj/query - 链式查询
  */
 int handle_obj_query(void *params, void *cbdata);
@@ -61,6 +66,11 @@ int handle_set_add(void *params, void *cbdata);
  * @brief DELETE /set/{ptr}/elements - 删除元素
  */
 int handle_set_remove(void *params, void *cbdata);
+
+/**
+ * @brief DELETE /set/{ptr} - 删除完整集合
+ */
+int handle_set_del(void *params, void *cbdata);
 
 // ==================== 工具处理器 ====================
 // 实现文件：src/handlers/utils_handle.c

@@ -296,8 +296,14 @@ int lmjcore_parse_query_path(const char *path_str, char **start_ptr_out,
           free(path_copy);
           return LMJCORE_ERROR_MEMORY_ALLOCATION_FAILED;
         }
-        memcpy(segments[segment_count], segment_start, seg_len);
-        segments[segment_count][seg_len] = '\0';
+        // URL 解码路径段
+        int decoded_len = url_decode(segment_start, seg_len,
+                                     segments[segment_count], seg_len + 1);
+        if (decoded_len < 0) {
+          // 解码失败，直接复制
+          memcpy(segments[segment_count], segment_start, seg_len);
+          segments[segment_count][seg_len] = '\0';
+        }
         segment_count++;
       }
       segment_start = p + 1;
@@ -334,8 +340,14 @@ int lmjcore_parse_query_path(const char *path_str, char **start_ptr_out,
       free(path_copy);
       return LMJCORE_ERROR_MEMORY_ALLOCATION_FAILED;
     }
-    memcpy(segments[segment_count], segment_start, seg_len);
-    segments[segment_count][seg_len] = '\0';
+    // URL 解码最后一个路径段
+    int decoded_len = url_decode(segment_start, seg_len,
+                                 segments[segment_count], seg_len + 1);
+    if (decoded_len < 0) {
+      // 解码失败，直接复制
+      memcpy(segments[segment_count], segment_start, seg_len);
+      segments[segment_count][seg_len] = '\0';
+    }
     segment_count++;
   }
 
@@ -368,4 +380,49 @@ bool lmjcore_txn_check_timeout(time_t start_time, int timeout) {
 
   time_t current_time = time(NULL);
   return difftime(current_time, start_time) >= timeout;
+}
+
+// ==================== URL 解码工具 ====================
+
+static int hex_char_to_int(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  return -1;
+}
+
+int url_decode(const char *src, size_t src_len, char *out_buf,
+               size_t out_buf_size) {
+  if (!src || !out_buf || out_buf_size == 0) {
+    return -1;
+  }
+
+  size_t j = 0; // 输出缓冲区索引
+
+  for (size_t i = 0; i < src_len; i++) {
+    if (src[i] == '%' && i + 2 < src_len) {
+      // 解析 %XX 编码
+      int high = hex_char_to_int(src[i + 1]);
+      int low = hex_char_to_int(src[i + 2]);
+
+      if (high >= 0 && low >= 0) {
+        // 缓冲区检查（预留 1 字节给'\0'）
+        if (j >= out_buf_size - 1) {
+          return -1;
+        }
+        out_buf[j++] = (char)((high << 4) | low);
+        i += 2; // 跳过两个十六进制字符
+        continue;
+      }
+    }
+
+    // 普通字符或无效的%编码，直接复制
+    if (j >= out_buf_size - 1) {
+      return -1;
+    }
+    out_buf[j++] = src[i];
+  }
+
+  out_buf[j] = '\0';
+  return (int)j;
 }

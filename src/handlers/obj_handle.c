@@ -245,10 +245,18 @@ int handle_obj_member_get(void *params, void *cbdata) {
 
   // 获取参数：ptr 和 member_name
   const char *ptr_str = route_params_get(hp->params, 0);
-  const char *member_name = route_params_get(hp->params, 1);
+  const char *member_name_encoded = route_params_get(hp->params, 1);
 
-  if (!ptr_str || !member_name) {
+  if (!ptr_str || !member_name_encoded) {
     RETURN_ERROR_MISSING_PARAM("ptr or member", response);
+  }
+
+  // URL 解码成员名
+  char member_name[512];
+  size_t member_name_len = strlen(member_name_encoded);
+  if (url_decode(member_name_encoded, member_name_len, member_name,
+                 sizeof(member_name)) < 0) {
+    RETURN_ERROR_INVALID_PARAM(response);
   }
 
   // 转换指针
@@ -333,10 +341,18 @@ int handle_obj_member_put(void *params, void *cbdata) {
 
   // 获取参数：ptr 和 member_name
   const char *ptr_str = route_params_get(hp->params, 0);
-  const char *member_name = route_params_get(hp->params, 1);
+  const char *member_name_encoded = route_params_get(hp->params, 1);
 
-  if (!ptr_str || !member_name) {
+  if (!ptr_str || !member_name_encoded) {
     RETURN_ERROR_MISSING_PARAM("ptr or member", response);
+  }
+
+  // URL 解码成员名
+  char member_name[512];
+  size_t member_name_len = strlen(member_name_encoded);
+  if (url_decode(member_name_encoded, member_name_len, member_name,
+                 sizeof(member_name)) < 0) {
+    RETURN_ERROR_INVALID_PARAM(response);
   }
 
   // 解析请求体获取 value
@@ -394,7 +410,7 @@ int handle_obj_member_put(void *params, void *cbdata) {
     return -1;
   }
 
-  // 设置成员值
+  // 设置成员值（使用解码后的成员名）
   rc = lmjcore_obj_member_put(txn, obj_ptr, (const uint8_t *)member_name,
                               strlen(member_name), encoded_value, encoded_len);
   free(encoded_value);
@@ -425,10 +441,18 @@ int handle_obj_member_del(void *params, void *cbdata) {
 
   // 获取参数：ptr 和 member_name
   const char *ptr_str = route_params_get(hp->params, 0);
-  const char *member_name = route_params_get(hp->params, 1);
+  const char *member_name_encoded = route_params_get(hp->params, 1);
 
-  if (!ptr_str || !member_name) {
+  if (!ptr_str || !member_name_encoded) {
     RETURN_ERROR_MISSING_PARAM("ptr or member", response);
+  }
+
+  // URL 解码成员名
+  char member_name[512];
+  size_t member_name_len = strlen(member_name_encoded);
+  if (url_decode(member_name_encoded, member_name_len, member_name,
+                 sizeof(member_name)) < 0) {
+    RETURN_ERROR_INVALID_PARAM(response);
   }
 
   // 转换指针
@@ -454,7 +478,7 @@ int handle_obj_member_del(void *params, void *cbdata) {
     RETURN_ERROR_NOT_FOUND("Object", response);
   }
 
-  // 删除成员
+  // 删除成员（使用解码后的成员名）
   rc = lmjcore_obj_member_del(txn, obj_ptr, (const uint8_t *)member_name,
                               strlen(member_name));
 

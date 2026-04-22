@@ -138,4 +138,16 @@ bool lmjcore_txn_check_timeout(time_t start_time, int timeout);
  */
 time_t lmjcore_txn_get_start_time(void);
 
+/**
+ * @brief URL 解码字符串（将 %XX 编码转换为原始字符）
+ *
+ * @param src 源字符串（URL 编码）
+ * @param src_len 源字符串长度
+ * @param out_buf 输出缓冲区（需调用方分配足够空间）
+ * @param out_buf_size 输出缓冲区大小
+ * @return int 解码后的实际长度，失败返回 -1
+ */
+int url_decode(const char *src, size_t src_len, char *out_buf,
+               size_t out_buf_size);
+
 #endif // HANDLE_UTILS_H

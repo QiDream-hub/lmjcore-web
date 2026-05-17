@@ -35,19 +35,25 @@ lmjcore-web/
 │       ├── lmjcore_web.md      # 架构设计文档
 │       └── API_REFERENCE.md    # API 参考文档
 ├── include/                # 公共头文件
+│   ├── batch_handle.h      # 批量操作处理器声明
+│   ├── config.h            # 配置管理
 │   ├── error_codes.h       # 错误码定义与 HTTP 映射
 │   ├── error_response.h    # 统一错误响应构建宏
 │   ├── handle_utils.h      # 工具函数声明
 │   ├── http_parser.h       # HTTP 解析器接口
 │   ├── http_server.h       # HTTP 服务器接口
 │   ├── lmjcore_handle.h    # 处理器声明 (聚合头文件)
+│   ├── log.h               # 日志模块
 │   └── routes.h            # 路由注册接口
 ├── src/                    # 源代码
 │   ├── main.c              # 程序入口
 │   ├── routes.c            # 路由注册
+│   ├── config.c            # 配置解析
+│   ├── log.c               # 日志模块
 │   ├── http_server.c       # HTTP 服务器实现
 │   ├── http_parser.c       # HTTP 解析器实现 (基于 llhttp)
 │   └── handlers/           # 处理器模块
+│       ├── batch_handle.c  # 批量操作处理器
 │       ├── obj_handle.c    # 对象 CRUD 处理器
 │       ├── set_handle.c    # 集合 CRUD 处理器
 │       ├── utils_handle.c  # 工具接口处理器

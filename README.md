@@ -183,6 +183,7 @@ lmjcore-web/
 ├── doc/                    # 文档
 │   └── lmjcore-web/        # 详细设计文档
 ├── include/                # 头文件
+│   ├── batch_handle.h      # 批量操作处理器
 │   ├── config.h            # 配置管理
 │   ├── error_codes.h       # 错误码定义
 │   ├── error_response.h    # 错误响应构建
@@ -190,10 +191,13 @@ lmjcore-web/
 │   ├── http_parser.h       # HTTP 解析
 │   ├── http_server.h       # HTTP 服务器
 │   ├── lmjcore_handle.h    # 处理器声明
+│   ├── log.h               # 日志模块
 │   └── routes.h            # 路由注册
 ├── src/                    # 源代码
 │   ├── config.c            # 配置解析
+│   ├── log.c               # 日志模块
 │   ├── handlers/           # 处理器模块
+│   │   ├── batch_handle.c  # 批量操作处理器
 │   │   ├── obj_handle.c    # 对象处理器
 │   │   ├── set_handle.c    # 集合处理器
 │   │   ├── utils_handle.c  # 工具处理器
@@ -205,7 +209,8 @@ lmjcore-web/
 ├── lmjcore.conf            # 示例配置文件
 └── thirdparty/             # 第三方依赖
     ├── LMJCore/
-    └── URLRouter/
+    ├── URLRouter/
+    └── cJSON/
 ```
 
 ---

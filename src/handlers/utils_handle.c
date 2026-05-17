@@ -2,11 +2,8 @@
 #include "error_response.h"
 #include "handle_utils.h"
 #include "lmjcore.h"
-#include "router.h"
 
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <time.h>
 
 // 全局启动时间

@@ -1,4 +1,5 @@
 #include "http_server.h"
+#include "handle_utils.h"
 #include "log.h"
 #include "lmjcore.h"
 #include <errno.h>

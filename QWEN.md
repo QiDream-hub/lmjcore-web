@@ -141,6 +141,30 @@ curl http://localhost:8080/obj/{ptr}
 
 ---
 
+## 批量操作
+
+| 方法 | 端点 | 说明 |
+|------|------|------|
+| `POST` | `/batch` | 在同一个事务内批量执行多个操作 |
+
+**请求格式**:
+```json
+{
+  "readonly": false,
+  "operations": [
+    {"method": "PUT", "path": "/obj/01abc.../name", "body": {"value": "hello"}},
+    {"method": "GET", "path": "/obj/01abc..."}
+  ]
+}
+```
+
+**特性**:
+- **原子性**: 所有操作在同一事务内执行，要么全部成功，要么全部回滚
+- **写事务**: 支持所有操作，限制总时长（默认 5 秒超时）
+- **只读事务**: `readonly: true` 时，不允许写操作（PUT/POST/DELETE）
+
+---
+
 ## 开发约定
 
 ### 代码风格

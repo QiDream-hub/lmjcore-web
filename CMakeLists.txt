@@ -66,6 +66,7 @@ set(SERVER_SOURCES
     ${SERVER_SRC_DIR}/log.c
     ${SERVER_SRC_DIR}/http_server.c
     ${SERVER_SRC_DIR}/http_parser.c
+    ${SERVER_SRC_DIR}/handlers/batch_handle.c
     ${SERVER_SRC_DIR}/handlers/obj_handle.c
     ${SERVER_SRC_DIR}/handlers/set_handle.c
     ${SERVER_SRC_DIR}/handlers/utils_handle.c

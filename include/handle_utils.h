@@ -3,7 +3,6 @@
 #define HANDLE_UTILS_H
 
 #include "lmjcore.h"
-#include "http_parser.h"
 #include "router.h"
 #include <stdbool.h>
 #include <stddef.h>

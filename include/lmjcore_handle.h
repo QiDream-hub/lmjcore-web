@@ -3,8 +3,14 @@
 #ifndef LMJCORE_HANDLE_H
 #define LMJCORE_HANDLE_H
 
-#include "handle_utils.h"
-#include "router.h"
+
+// ==================== 批量操作处理器 ====================
+// 实现文件：src/handlers/batch_handle.c
+
+/**
+ * @brief POST /batch - 批量执行多个操作（同一事务内）
+ */
+int handle_batch_operations(void *params, void *cbdata);
 
 // ==================== 对象处理器 ====================
 // 实现文件：src/handlers/obj_handle.c

@@ -37,7 +37,94 @@
 | 对象操作 | 7 | 对象的 CRUD 和链式查询 |
 | 集合操作 | 5 | 集合的 CRUD |
 | 工具接口 | 2 | 健康检查和指针验证 |
-| **总计** | **14** | |
+| 批量操作 | 1 | 事务内批量执行多个操作 |
+| **总计** | **15** | |
+
+---
+
+## 批量操作 API
+
+### 15. 批量执行操作
+
+**请求**
+```http
+POST /batch
+Content-Type: application/json
+
+{
+  "readonly": false,
+  "operations": [
+    {
+      "method": "PUT",
+      "path": "/obj/01abc123.../name",
+      "body": {"value": "Alice"}
+    },
+    {
+      "method": "GET",
+      "path": "/obj/01abc123..."
+    },
+    {
+      "method": "DELETE",
+      "path": "/obj/01abc123.../temp"
+    }
+  ]
+}
+```
+
+**请求体字段**
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `readonly` | boolean | 可选，默认 `false`。`true` 表示只读事务 |
+| `operations` | array | 操作列表，每个操作包含 `method`、`path`、可选 `body` |
+
+**操作结构**
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `method` | string | HTTP 方法：`GET`、`PUT`、`POST`、`DELETE` |
+| `path` | string | 完整路径，如 `/obj/{ptr}`、`/obj/{ptr}/{member}` |
+| `body` | object | 可选，仅 `PUT`/`POST` 需要，格式 `{"value": "..."}` |
+
+**成功响应**
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "success": true,
+  "results": [
+    {"status": 200, "body": {"success": true}},
+    {"status": 200, "body": {"ptr": "01abc...", "members": [...]}},
+    {"status": 200, "body": {"success": true}}
+  ]
+}
+```
+
+**错误响应**
+```http
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+
+{
+  "success": false,
+  "error": "Operation 1 failed",
+  "details": {"error": "Object not found"}
+}
+```
+
+**说明**
+- **原子性**: 所有操作在同一事务内执行，任一操作失败则全部回滚
+- **写事务**: 默认模式，支持所有操作类型，限制总时长（默认 5 秒超时）
+- **只读事务**: 设置 `readonly: true` 时，操作中包含写操作（PUT/POST/DELETE）则返回错误
+
+**错误响应**
+```http
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+
+{
+  "error": "Readonly transaction cannot contain write operations"
+}
+```
 
 ---
 
@@ -567,7 +654,7 @@ Content-Type: application/json
 
 ## 工具接口 API
 
-### 14. 检查指针是否存在
+### 16. 检查指针是否存在
 
 **请求**
 ```http
@@ -608,7 +695,7 @@ Content-Type: application/json
 
 ---
 
-### 15. 健康检查
+### 17. 健康检查
 
 **请求**
 ```http
@@ -714,6 +801,16 @@ curl -X DELETE http://localhost:8080/obj/01abc123...
 
 # 11. 删除集合
 curl -X DELETE http://localhost:8080/set/02def456...
+
+# 12. 批量操作
+curl -X POST http://localhost:8080/batch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operations": [
+      {"method": "PUT", "path": "/obj/01abc.../name", "body": {"value": "Alice"}},
+      {"method": "GET", "path": "/obj/01abc..."}
+    ]
+  }'
 ```
 
 ### JavaScript 示例
@@ -751,15 +848,32 @@ const queryPath = async (path) => {
   return await response.json();
 };
 
+// 批量操作
+const batchOperations = async (operations, readonly = false) => {
+  const response = await fetch('http://localhost:8080/batch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ readonly, operations })
+  });
+  return await response.json();
+};
+
 // 使用示例
 (async () => {
   const ptr = await createObject();
   await setMember(ptr, 'name', 'Alice');
   const member = await getMember(ptr, 'name');
   console.log('Member value:', member.value);
-  
+
   const result = await queryPath(`${ptr}.name`);
   console.log('Query result:', result);
+
+  // 批量操作示例
+  const batchResult = await batchOperations([
+    { method: 'PUT', path: `/obj/${ptr}/age`, body: { value: '25' } },
+    { method: 'GET', path: `/obj/${ptr}` }
+  ]);
+  console.log('Batch result:', batchResult);
 })();
 ```
 
@@ -770,3 +884,4 @@ const queryPath = async (path) => {
 | 版本 | 日期 | 变更 |
 |------|------|------|
 | 1.0.0 | 2024-01-01 | 初始版本 |
+| 1.1.0 | 2026-05-17 | 添加批量操作 API (`POST /batch`) |

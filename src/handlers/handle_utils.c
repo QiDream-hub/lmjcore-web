@@ -34,54 +34,54 @@ const char *route_params_get(route_params_t *params, size_t index) {
   return param_bufs[buf_index];
 }
 
-// ==================== JSON 解析辅助函数 ====================
+// ==================== 事务管理辅助函数 ====================
 
-int json_get_string(const char *json, size_t json_len, const char *key,
-                    char **out_value, size_t *out_len) {
-  (void)json_len;
-
-  if (!json || !key || !out_value) {
-    return -1;
+/**
+ * @brief 根据参数开启事务（支持外部传入或自动创建）
+ * @param hp 处理器参数
+ * @param txn_out 输出事务指针
+ * @param flags 事务标志
+ * @return LMJCORE_SUCCESS 成功，否则失败
+ */
+int handle_txn_begin(handle_params_t *hp, lmjcore_txn **txn_out, int flags) {
+  if (!hp || !txn_out) {
+    return LMJCORE_ERROR_NULL_POINTER;
   }
 
-  char search_pattern[256];
-  snprintf(search_pattern, sizeof(search_pattern), "\"%s\"", key);
-
-  const char *key_pos = strstr(json, search_pattern);
-  if (!key_pos) {
-    return -1;
+  // 如果已有外部事务，直接使用
+  if (hp->txn) {
+    *txn_out = hp->txn;
+    return LMJCORE_SUCCESS;
   }
 
-  const char *p = key_pos + strlen(search_pattern);
-  while (*p && (*p == ':' || *p == ' ' || *p == '\t')) {
-    p++;
+  // 否则创建新事务
+  int rc = lmjcore_txn_begin(hp->env, NULL, flags, txn_out);
+  return rc;
+}
+
+/**
+ * @brief 根据参数提交/回滚事务（仅当自动管理时）
+ * @param hp 处理器参数
+ * @param txn 事务指针
+ * @param success 是否成功
+ * @return LMJCORE_SUCCESS 成功，否则失败
+ */
+int handle_txn_end(handle_params_t *hp, lmjcore_txn *txn, int success) {
+  if (!hp || !txn) {
+    return LMJCORE_ERROR_NULL_POINTER;
   }
 
-  if (*p != '"') {
-    return -1;
-  }
-  p++;
-
-  const char *start = p;
-  while (*p && *p != '"') {
-    if (*p == '\\' && *(p + 1)) {
-      p += 2;
-    } else {
-      p++;
-    }
+  // 如果是外部事务，不自动管理
+  if (hp->txn) {
+    return LMJCORE_SUCCESS;
   }
 
-  size_t len = p - start;
-  *out_value = (char *)malloc(len + 1);
-  if (!*out_value) {
-    return -1;
+  // 自动管理事务
+  if (success) {
+    return lmjcore_txn_commit(txn);
+  } else {
+    return lmjcore_txn_abort(txn);
   }
-
-  memcpy(*out_value, start, len);
-  (*out_value)[len] = '\0';
-  *out_len = len;
-
-  return 0;
 }
 
 // ==================== 指针转换工具 ====================

@@ -75,13 +75,13 @@ Content-Type: application/json
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `readonly` | boolean | 可选，默认 `false`。`true` 表示只读事务 |
-| `operations` | array | 操作列表，每个操作包含 `method`、`path`、可选 `body` |
+| `operations` | array | 操作列表，最大 1000 个操作 |
 
 **操作结构**
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `method` | string | HTTP 方法：`GET`、`PUT`、`POST`、`DELETE` |
-| `path` | string | 完整路径，如 `/obj/{ptr}`、`/obj/{ptr}/{member}` |
+| `path` | string | 完整路径，如 `/obj/{ptr}`、`/obj/{ptr}/{member}`、`/set/{ptr}` |
 | `body` | object | 可选，仅 `PUT`/`POST` 需要，格式 `{"value": "..."}` |
 
 **成功响应**
@@ -92,9 +92,21 @@ Content-Type: application/json
 {
   "success": true,
   "results": [
-    {"status": 200, "body": {"success": true}},
-    {"status": 200, "body": {"ptr": "01abc...", "members": [...]}},
-    {"status": 200, "body": {"success": true}}
+    {
+      "status": 200,
+      "body": {"success": true}
+    },
+    {
+      "status": 200,
+      "body": {
+        "ptr": "01abc123def456789012345678901234",
+        "type": "object"
+      }
+    },
+    {
+      "status": 200,
+      "body": {"success": true}
+    }
   ]
 }
 ```
@@ -106,25 +118,31 @@ Content-Type: application/json
 
 {
   "success": false,
-  "error": "Operation 1 failed",
-  "details": {"error": "Object not found"}
+  "failed_at": 1,
+  "details": {
+    "error": "Object not found"
+  }
 }
 ```
+
+**错误响应字段**
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `success` | boolean | 始终为 `false` |
+| `failed_at` | number | 失败操作的索引（从 0 开始） |
+| `details` | object/string | 错误详情（JSON 对象或字符串） |
 
 **说明**
 - **原子性**: 所有操作在同一事务内执行，任一操作失败则全部回滚
 - **写事务**: 默认模式，支持所有操作类型，限制总时长（默认 5 秒超时）
-- **只读事务**: 设置 `readonly: true` 时，操作中包含写操作（PUT/POST/DELETE）则返回错误
+- **只读事务**: 设置 `readonly: true` 时，如果操作中包含写操作（PUT/POST/DELETE）则返回错误
+- **操作限制**: 最多支持 1000 个并发操作
+- **错误处理**: 失败时返回 `failed_at` 字段指示失败位置，便于调试
 
-**错误响应**
-```http
-HTTP/1.1 400 Bad Request
-Content-Type: application/json
-
-{
-  "error": "Readonly transaction cannot contain write operations"
-}
-```
+**响应格式说明**
+- `results` 数组中的每个元素对应一个操作
+- `status` 字段为该操作的 HTTP 状态码
+- `body` 字段为该操作的响应体（自动解析为 JSON 对象或保留为字符串）
 
 ---
 

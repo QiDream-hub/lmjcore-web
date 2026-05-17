@@ -7,6 +7,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <time.h>
 
 // ==================== 值类型标记 ====================
 
@@ -28,10 +29,12 @@ typedef enum {
 typedef struct {
   route_params_t *params;
   lmjcore_env *env;
-  char *body;      // 请求体
-  size_t body_len; // 请求体长度
-  int txn_timeout; // 事务超时时间（秒）
-  time_t txn_start_time; // 事务开始时间
+  lmjcore_txn *txn;        // 可选：外部传入的事务（批量操作时共享）
+  char *body;              // 请求体
+  size_t body_len;         // 请求体长度
+  int txn_timeout;         // 事务超时时间（秒）
+  time_t txn_start_time;   // 事务开始时间
+  bool auto_manage_txn;    // 是否自动管理事务（默认 true，批量操作时设为 false）
 } handle_params_t;
 
 // ==================== 工具函数声明 ====================
@@ -44,18 +47,6 @@ typedef struct {
  * @return const char* 参数字符串（静态缓冲区，下次调用会覆盖）
  */
 const char *route_params_get(route_params_t *params, size_t index);
-
-/**
- * @brief 从 JSON 对象中提取字符串值
- *
- * @param json JSON 字符串
- * @param key 键名
- * @param out_value 输出值（需调用方释放）
- * @param out_len 输出长度
- * @return int 错误码（0 表示成功）
- */
-int json_get_string(const char *json, size_t json_len, const char *key,
-                    char **out_value, size_t *out_len);
 
 /**
  * @brief 将 34 位十六进制字符串转换为 17 字节二进制指针
@@ -148,5 +139,25 @@ time_t lmjcore_txn_get_start_time(void);
  */
 int url_decode(const char *src, size_t src_len, char *out_buf,
                size_t out_buf_size);
+
+/**
+ * @brief 事务管理：开启事务（支持外部传入或自动创建）
+ *
+ * @param hp 处理器参数
+ * @param txn_out 输出事务指针
+ * @param flags 事务标志（如 LMJCORE_TXN_READONLY）
+ * @return LMJCORE_SUCCESS 成功，否则失败
+ */
+int handle_txn_begin(handle_params_t *hp, lmjcore_txn **txn_out, int flags);
+
+/**
+ * @brief 事务管理：提交/回滚事务（仅当自动管理时）
+ *
+ * @param hp 处理器参数
+ * @param txn 事务指针
+ * @param success 是否成功
+ * @return LMJCORE_SUCCESS 成功，否则失败
+ */
+int handle_txn_end(handle_params_t *hp, lmjcore_txn *txn, int success);
 
 #endif // HANDLE_UTILS_H

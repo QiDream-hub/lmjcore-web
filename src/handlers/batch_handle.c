@@ -1,580 +1,256 @@
-// src/handlers/batch_handle.c - 批量操作处理器
+// src/handlers/batch_handle.c - 批量操作处理器 (事务复用架构)
+#include "cJSON.h"
 #include "error_response.h"
 #include "handle_utils.h"
 #include "lmjcore.h"
+#include "lmjcore_handle.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-// ==================== 操作类型定义 ====================
+// ==================== 常量定义 ====================
 
-typedef enum {
-  BATCH_OP_GET = 0,
-  BATCH_OP_PUT = 1,
-  BATCH_OP_POST = 2,
-  BATCH_OP_DELETE = 3
-} batch_op_method_t;
+#define MAX_OPERATIONS 1000
+
+// ==================== 操作结果结构 ====================
 
 typedef struct {
-  batch_op_method_t method;
-  const char *path;           // 完整路径（如 /obj/01abc.../member）
-  const char *body_value;     // PUT/POST 请求的值
-  size_t body_value_len;
-  int result_status;    // 执行结果状态码
-  char *result_body;    // 执行结果 body
-  size_t result_body_len;
-} batch_operation_t;
+  int status_code;
+  char *body;
+  size_t body_len;
+} batch_result_t;
 
 // ==================== 事务超时检查宏 ====================
 
-#define CHECK_TXN_TIMEOUT(hp, response, txn)                                 \
+#define CHECK_TXN_TIMEOUT(hp, response)                                      \
   do {                                                                       \
     if (lmjcore_txn_check_timeout((hp)->txn_start_time, (hp)->txn_timeout)) {\
-      if (txn) lmjcore_txn_abort(txn);                                       \
       RETURN_ERROR_TXN_TIMEOUT(response);                                    \
     }                                                                        \
   } while (0)
 
-// ==================== JSON 解析辅助 ====================
+// ==================== 内部调用包装器 ====================
 
 /**
- * @brief 从 JSON 中提取布尔值
+ * @brief 内部调用处理器，复用现有路由处理器逻辑
+ * @param handler 处理器函数指针
+ * @param params 参数结构
+ * @param response 响应结构
+ * @return 0=成功，-1=失败
  */
-static int json_get_bool(const char *json, size_t json_len, const char *key,
-                         bool *out_value) {
-  (void)json_len;
-  if (!json || !key || !out_value) {
-    return -1;
+typedef int (*handler_fn)(void *, void *);
+
+static int invoke_handler(handler_fn handler, handle_params_t *params,
+                          http_response_t *response) {
+  // 清空响应
+  if (response->body) {
+    free(response->body);
+    response->body = NULL;
+    response->body_len = 0;
   }
 
-  char search_pattern[256];
-  snprintf(search_pattern, sizeof(search_pattern), "\"%s\"", key);
-
-  const char *key_pos = strstr(json, search_pattern);
-  if (!key_pos) {
-    return -1;
-  }
-
-  const char *p = key_pos + strlen(search_pattern);
-  while (*p && (*p == ':' || *p == ' ' || *p == '\t')) {
-    p++;
-  }
-
-  if (strncmp(p, "true", 4) == 0) {
-    *out_value = true;
-    return 0;
-  } else if (strncmp(p, "false", 5) == 0) {
-    *out_value = false;
-    return 0;
-  }
-
-  return -1;
+  // 调用处理器
+  return handler(params, response);
 }
 
-/**
- * @brief 从 JSON 中提取字符串值（不分配内存，使用静态缓冲区）
- * @return 成功返回 0，失败返回 -1
- */
-static int json_get_string_static(const char *json, size_t json_len,
-                                   const char *key, const char **out_value,
-                                   size_t *out_len) {
-  (void)json_len;
-  static __thread char value_buf[8192];
-
-  if (!json || !key || !out_value || !out_len) {
-    return -1;
-  }
-
-  char search_pattern[256];
-  snprintf(search_pattern, sizeof(search_pattern), "\"%s\"", key);
-
-  const char *key_pos = strstr(json, search_pattern);
-  if (!key_pos) {
-    return -1;
-  }
-
-  const char *p = key_pos + strlen(search_pattern);
-  while (*p && (*p == ':' || *p == ' ' || *p == '\t')) {
-    p++;
-  }
-
-  if (*p != '"') {
-    return -1;
-  }
-  p++;
-
-  const char *start = p;
-  while (*p && *p != '"') {
-    if (*p == '\\' && *(p + 1)) {
-      p += 2;
-    } else {
-      p++;
-    }
-  }
-
-  size_t len = p - start;
-  if (len >= sizeof(value_buf) - 1) {
-    return -1;
-  }
-
-  memcpy(value_buf, start, len);
-  value_buf[len] = '\0';
-
-  *out_value = value_buf;
-  *out_len = len;
-
-  return 0;
-}
+// ==================== 解析操作并调用处理器 ====================
 
 /**
- * @brief 解析单个操作
+ * @brief 解析单个操作，构建参数，调用对应处理器
  */
-static int parse_operation(const char *json, size_t json_len,
-                           batch_operation_t *op) {
-  (void)json_len;
-  const char *method_str = NULL;
-  size_t method_len = 0;
+static int execute_operation(handle_params_t *hp, const cJSON *op_obj,
+                             batch_result_t *result) {
+  // 解析 method 和 path
+  cJSON *method_item = cJSON_GetObjectItemCaseSensitive(op_obj, "method");
+  cJSON *path_item = cJSON_GetObjectItemCaseSensitive(op_obj, "path");
 
-  // 解析 method
-  if (json_get_string_static(json, json_len, "method", &method_str,
-                             &method_len) != 0) {
+  if (!method_item || !cJSON_IsString(method_item) ||
+      !path_item || !cJSON_IsString(path_item)) {
+    result->status_code = HTTP_STATUS_BAD_REQUEST;
+    result->body = strdup("{\"error\":\"Missing method or path\"}");
+    result->body_len = strlen(result->body);
     return -1;
   }
 
-  if (strncmp(method_str, "GET", method_len) == 0) {
-    op->method = BATCH_OP_GET;
-  } else if (strncmp(method_str, "PUT", method_len) == 0) {
-    op->method = BATCH_OP_PUT;
-  } else if (strncmp(method_str, "POST", method_len) == 0) {
-    op->method = BATCH_OP_POST;
-  } else if (strncmp(method_str, "DELETE", method_len) == 0) {
-    op->method = BATCH_OP_DELETE;
-  } else {
-    return -1;
-  }
+  const char *method_str = method_item->valuestring;
+  const char *path = path_item->valuestring;
 
-  // 解析 path
-  if (json_get_string_static(json, json_len, "path", &op->path,
-                             &method_len) != 0) {
-    return -1;
-  }
-
-  // 解析 body（可选，仅 PUT/POST 需要）
-  if (op->method == BATCH_OP_PUT || op->method == BATCH_OP_POST) {
-    // 查找 body 对象
-    const char *body_key = "\"body\"";
-    const char *body_pos = strstr(json, body_key);
-    if (body_pos) {
-      const char *p = body_pos + strlen(body_key);
-      while (*p && (*p == ':' || *p == ' ' || *p == '\t')) {
-        p++;
-      }
-
-      if (*p == '{') {
-        // 查找 value 字段
-        const char *value_str = NULL;
-        size_t value_len = 0;
-        if (json_get_string_static(json, json_len, "value", &value_str,
-                                   &value_len) == 0) {
-          op->body_value = value_str;
-          op->body_value_len = value_len;
-        }
-      }
-    }
-  }
-
-  return 0;
-}
-
-/**
- * @brief 解析 operations 数组
- * @return 成功返回操作数量，失败返回 -1
- */
-static int parse_operations_array(const char *json, size_t json_len,
-                                  batch_operation_t **ops_out,
-                                  size_t *count_out) {
-  (void)json_len;
-  // 查找 "operations" 数组
-  const char *ops_key = "\"operations\"";
-  const char *ops_pos = strstr(json, ops_key);
-  if (!ops_pos) {
-    return -1;
-  }
-
-  const char *p = ops_pos + strlen(ops_key);
-  while (*p && (*p == ':' || *p == ' ' || *p == '\t')) {
-    p++;
-  }
-
-  if (*p != '[') {
-    return -1;
-  }
-  p++;
-
-  // 计算操作数量（数左花括号）
-  size_t capacity = 16;
-  batch_operation_t *ops =
-      (batch_operation_t *)malloc(capacity * sizeof(batch_operation_t));
-  if (!ops) {
-    return -1;
-  }
-
-  size_t count = 0;
-  int brace_depth = 1;  // 数组深度
-  const char *obj_start = NULL;
-
-  while (*p && brace_depth > 0) {
-    if (*p == '[') {
-      brace_depth++;
-    } else if (*p == ']') {
-      brace_depth--;
-    } else if (*p == '{') {
-      if (brace_depth == 1) {
-        // 开始一个新的操作对象
-        obj_start = p;
-      }
-      if (brace_depth == 2 && obj_start) {
-        // 在操作对象内部
-      }
-    } else if (*p == '}') {
-      if (brace_depth == 2 && obj_start) {
-        // 结束一个操作对象
-        if (count >= capacity) {
-          capacity *= 2;
-          batch_operation_t *new_ops = (batch_operation_t *)realloc(
-              ops, capacity * sizeof(batch_operation_t));
-          if (!new_ops) {
-            free(ops);
-            return -1;
-          }
-          ops = new_ops;
-        }
-
-        memset(&ops[count], 0, sizeof(batch_operation_t));
-        // 解析这个操作对象
-        // 注意：这里需要复制 JSON 片段以便解析
-        size_t obj_len = p - obj_start + 1;
-        char *obj_json = (char *)malloc(obj_len + 1);
-        if (!obj_json) {
-          free(ops);
-          return -1;
-        }
-        memcpy(obj_json, obj_start, obj_len);
-        obj_json[obj_len] = '\0';
-
-        if (parse_operation(obj_json, obj_len, &ops[count]) == 0) {
-          count++;
-        }
-
-        free(obj_json);
-        obj_start = NULL;
-      }
-    }
-    p++;
-  }
-
-  *ops_out = ops;
-  *count_out = count;
-  return (int)count;
-}
-
-// ==================== 路径路由分发 ====================
-
-/**
- * @brief 根据路径判断是对象操作还是集合操作
- * @return 0=对象，1=集合，-1=无效
- */
-static int get_entity_type_from_path(const char *path) {
-  if (!path) return -1;
-
-  if (strncmp(path, "/obj/", 5) == 0 || strncmp(path, "/obj'", 4) == 0) {
-    return 0;
-  }
-  if (strncmp(path, "/set/", 5) == 0 || strncmp(path, "/set'", 4) == 0) {
-    return 1;
-  }
-  return -1;
-}
-
-/**
- * @brief 执行单个操作
- */
-static int execute_operation(lmjcore_txn *txn,
-                             batch_operation_t *op, http_response_t *response) {
-  if (!op || !op->path) {
-    return -1;
-  }
-
-  // 简化路径解析：提取实体类型和参数
-  // 支持的路径格式：
-  // /obj/{ptr}
-  // /obj/{ptr}/{member}
-  // /set/{ptr}
-  // /set/{ptr}/elements
-
+  // 解析路径，确定处理器
+  // 格式：/obj/{ptr}、/obj/{ptr}/{member}、/set/{ptr}、/set/{ptr}/elements
+  const char *entity_type = NULL;
   const char *ptr_str = NULL;
-  const char *member_name = NULL;
-  char decoded_member[512] = {0};
+  const char *sub_path = NULL;
 
-  // 跳过前缀
-  const char *path = op->path;
-  int entity_type = get_entity_type_from_path(path);
-  if (entity_type < 0) {
-    build_error_response(HTTP_STATUS_BAD_REQUEST,
-                         "Invalid path: must start with /obj/ or /set/",
-                         response);
+  if (strncmp(path, "/obj/", 5) == 0) {
+    entity_type = "obj";
+    ptr_str = path + 5;
+  } else if (strncmp(path, "/set/", 5) == 0) {
+    entity_type = "set";
+    ptr_str = path + 5;
+  } else {
+    result->status_code = HTTP_STATUS_BAD_REQUEST;
+    result->body = strdup("{\"error\":\"Invalid path prefix\"}");
+    result->body_len = strlen(result->body);
     return -1;
   }
 
-  // 提取 ptr 和 member
-  // 格式：/obj/{ptr} 或 /obj/{ptr}/{member}
-  const char *first_slash = strchr(path + 1, '/');
-  if (!first_slash) {
-    build_error_response(HTTP_STATUS_BAD_REQUEST, "Invalid path format",
-                         response);
-    return -1;
+  // 查找第二个斜杠
+  const char *slash = strchr(ptr_str, '/');
+  if (slash) {
+    sub_path = slash + 1;
   }
 
-  ptr_str = first_slash + 1;
+  // 构建 route_params（模拟路由解析结果）
+  route_param_t params_arr[2] = {{0}};
+  route_params_t route_params = {0};
 
-  // 查找第二个斜杠（成员名）
-  const char *second_slash = strchr(ptr_str, '/');
-  if (second_slash) {
-    size_t ptr_len = second_slash - ptr_str;
-    if (ptr_len != LMJCORE_PTR_STRING_LEN) {
-      build_error_response(HTTP_STATUS_BAD_REQUEST, "Invalid pointer length",
-                           response);
+  char ptr_buf[64] = {0};
+  char member_buf[512] = {0};
+
+  // 提取 ptr
+  size_t ptr_len = slash ? (size_t)(slash - ptr_str) : strlen(ptr_str);
+  if (ptr_len != LMJCORE_PTR_STRING_LEN) {
+    result->status_code = HTTP_STATUS_BAD_REQUEST;
+    result->body = strdup("{\"error\":\"Invalid pointer length\"}");
+    result->body_len = strlen(result->body);
+    return -1;
+  }
+  memcpy(ptr_buf, ptr_str, ptr_len);
+  params_arr[0].ptr = ptr_buf;
+  params_arr[0].len = ptr_len;
+
+  // 提取 member（如果有）
+  if (sub_path) {
+    size_t member_len = strlen(sub_path);
+    if (member_len >= sizeof(member_buf)) {
+      result->status_code = HTTP_STATUS_BAD_REQUEST;
+      result->body = strdup("{\"error\":\"Member name too long\"}");
+      result->body_len = strlen(result->body);
       return -1;
     }
-
-    member_name = second_slash + 1;
-    size_t member_len = strlen(member_name);
-
-    // URL 解码成员名
-    if (url_decode(member_name, member_len, decoded_member,
-                   sizeof(decoded_member)) < 0) {
-      build_error_response(HTTP_STATUS_BAD_REQUEST, "Invalid member name",
-                           response);
+    // URL 解码
+    if (url_decode(sub_path, member_len, member_buf, sizeof(member_buf)) < 0) {
+      result->status_code = HTTP_STATUS_BAD_REQUEST;
+      result->body = strdup("{\"error\":\"Invalid member name\"}");
+      result->body_len = strlen(result->body);
       return -1;
     }
-    member_name = decoded_member;
+    params_arr[1].ptr = member_buf;
+    params_arr[1].len = strlen(member_buf);
+    route_params.count = 2;
+  } else {
+    route_params.count = 1;
   }
 
-  // 转换指针
-  lmjcore_ptr obj_ptr;
-  if (lmjcore_ptr_from_hex(ptr_str, obj_ptr) != 0) {
-    build_error_response(HTTP_STATUS_BAD_REQUEST, "Invalid pointer format",
-                         response);
+  route_params.params = params_arr;
+
+  // 构建 body（如果有）
+  char *body_str = NULL;
+  cJSON *body_item = cJSON_GetObjectItemCaseSensitive(op_obj, "body");
+  if (body_item && cJSON_IsObject(body_item)) {
+    cJSON *value_item = cJSON_GetObjectItemCaseSensitive(body_item, "value");
+    if (value_item && cJSON_IsString(value_item)) {
+      cJSON *body_obj = cJSON_CreateObject();
+      cJSON_AddStringToObject(body_obj, "value", value_item->valuestring);
+      body_str = cJSON_PrintUnformatted(body_obj);
+      cJSON_Delete(body_obj);
+    }
+  }
+
+  // 构建 handle_params
+  handle_params_t local_params = {
+    .params = &route_params,
+    .env = hp->env,
+    .txn = hp->txn,           // 共享事务
+    .body = body_str,
+    .body_len = body_str ? strlen(body_str) : 0,
+    .txn_timeout = hp->txn_timeout,
+    .txn_start_time = hp->txn_start_time,
+    .auto_manage_txn = false  // 批量操作中不自动管理事务
+  };
+
+  // 响应
+  http_response_t response = {0};
+
+  // 确定并调用处理器
+  handler_fn handler = NULL;
+
+  if (strcmp(entity_type, "obj") == 0) {
+    // 对象操作
+    if (strcmp(method_str, "GET") == 0) {
+      if (sub_path) {
+        handler = handle_obj_member_get;
+      } else {
+        handler = handle_obj_get;
+      }
+    } else if (strcmp(method_str, "PUT") == 0) {
+      if (sub_path) {
+        handler = handle_obj_member_put;
+      }
+    } else if (strcmp(method_str, "POST") == 0) {
+      // 对象不支持 POST
+      result->status_code = HTTP_STATUS_BAD_REQUEST;
+      result->body = strdup("{\"error\":\"POST not supported for objects\"}");
+      result->body_len = strlen(result->body);
+      if (body_str) free(body_str);
+      return -1;
+    } else if (strcmp(method_str, "DELETE") == 0) {
+      if (sub_path) {
+        handler = handle_obj_member_del;
+      } else {
+        handler = handle_obj_del;
+      }
+    }
+  } else {
+    // 集合操作
+    if (strcmp(method_str, "GET") == 0) {
+      if (strcmp(sub_path ? sub_path : "", "elements") == 0) {
+        // GET /set/{ptr}/elements 不支持
+        result->status_code = HTTP_STATUS_BAD_REQUEST;
+        result->body = strdup("{\"error\":\"GET /set/{ptr}/elements not supported\"}");
+        result->body_len = strlen(result->body);
+        if (body_str) free(body_str);
+        return -1;
+      } else {
+        handler = handle_set_get;
+      }
+    } else if (strcmp(method_str, "POST") == 0) {
+      if (sub_path && strcmp(sub_path, "elements") == 0) {
+        handler = handle_set_add;
+      }
+    } else if (strcmp(method_str, "DELETE") == 0) {
+      if (sub_path && strcmp(sub_path, "elements") == 0) {
+        handler = handle_set_remove;
+      } else {
+        handler = handle_set_del;
+      }
+    }
+  }
+
+  if (!handler) {
+    result->status_code = HTTP_STATUS_BAD_REQUEST;
+    result->body = strdup("{\"error\":\"Invalid method for this path\"}");
+    result->body_len = strlen(result->body);
+    if (body_str) free(body_str);
     return -1;
   }
 
-  // 检查实体是否存在
-  int exists = lmjcore_entity_exist(txn, obj_ptr);
-  if (exists != 1) {
-    RETURN_ERROR_NOT_FOUND("Entity", response);
+  // 调用处理器
+  int rc = invoke_handler(handler, &local_params, &response);
+
+  // 复制结果
+  result->status_code = response.status_code;
+  if (response.body) {
+    result->body = strdup(response.body);
+    result->body_len = response.body_len;
+    free(response.body);
   }
 
-  // 根据操作类型执行
-  switch (op->method) {
-    case BATCH_OP_GET: {
-      if (entity_type == 0) {
-        // 对象 GET
-        if (member_name) {
-          // 获取成员值
-          size_t value_buf_size = 4096;
-          uint8_t *value_buf = (uint8_t *)malloc(value_buf_size);
-          if (!value_buf) {
-            RETURN_ERROR_NO_MEMORY(response);
-          }
-
-          size_t value_len = 0;
-          int rc = lmjcore_obj_member_get(
-              txn, obj_ptr, (const uint8_t *)member_name, strlen(member_name),
-              value_buf, value_buf_size, &value_len);
-
-          if (rc == LMJCORE_ERROR_MEMBER_NOT_FOUND) {
-            free(value_buf);
-            RETURN_ERROR_MEMBER_NOT_FOUND(response);
-          }
-          if (rc != LMJCORE_SUCCESS) {
-            free(value_buf);
-            build_lmjcore_error_response(rc, response);
-            return -1;
-          }
-
-          // 解码值
-          char *value_str = NULL;
-          api_value_type_t value_type;
-          lmjcore_decode_value(value_buf, value_len, &value_str, &value_type);
-          free(value_buf);
-
-          const char *type_str =
-              (value_type == VALUE_TYPE_RAW)    ? "raw"
-              : (value_type == VALUE_TYPE_REF)  ? "ref"
-              : (value_type == VALUE_TYPE_SET)  ? "set"
-              : (value_type == VALUE_TYPE_NULL) ? "null"
-                                                : "unknown";
-
-          char json_buf[4096];
-          snprintf(json_buf, sizeof(json_buf),
-                   "{\"member\":\"%s\",\"value\":\"%s\",\"type\":\"%s\"}",
-                   member_name, value_str ? value_str : "", type_str);
-          free(value_str);
-
-          op->result_body = strdup(json_buf);
-          op->result_body_len = strlen(json_buf);
-          op->result_status = HTTP_STATUS_OK;
-        } else {
-          // 获取完整对象（简化版本）
-          // TODO: 实现完整对象获取
-          char json_buf[256];
-          snprintf(json_buf, sizeof(json_buf),
-                   "{\"ptr\":\"%.*s\",\"type\":\"object\"}",
-                   LMJCORE_PTR_STRING_LEN, ptr_str);
-          op->result_body = strdup(json_buf);
-          op->result_body_len = strlen(json_buf);
-          op->result_status = HTTP_STATUS_OK;
-        }
-      } else {
-        // 集合 GET（简化版本）
-        char json_buf[256];
-        snprintf(json_buf, sizeof(json_buf),
-                 "{\"ptr\":\"%.*s\",\"type\":\"set\"}",
-                 LMJCORE_PTR_STRING_LEN, ptr_str);
-        op->result_body = strdup(json_buf);
-        op->result_body_len = strlen(json_buf);
-        op->result_status = HTTP_STATUS_OK;
-      }
-      break;
-    }
-
-    case BATCH_OP_PUT: {
-      if (entity_type != 0 || !member_name) {
-        build_error_response(HTTP_STATUS_BAD_REQUEST,
-                             "PUT requires /obj/{ptr}/{member} path",
-                             response);
-        return -1;
-      }
-
-      // 编码值
-      size_t encoded_size = 1 + LMJCORE_PTR_LEN + op->body_value_len + 16;
-      uint8_t *encoded_value = (uint8_t *)malloc(encoded_size);
-      if (!encoded_value) {
-        RETURN_ERROR_NO_MEMORY(response);
-      }
-
-      size_t encoded_len = 0;
-      int rc = lmjcore_encode_value(op->body_value, op->body_value_len,
-                                    encoded_value, encoded_size, &encoded_len);
-      if (rc != LMJCORE_SUCCESS) {
-        free(encoded_value);
-        build_lmjcore_error_response(rc, response);
-        return -1;
-      }
-
-      // 设置成员值
-      rc = lmjcore_obj_member_put(txn, obj_ptr, (const uint8_t *)member_name,
-                                  strlen(member_name), encoded_value,
-                                  encoded_len);
-      free(encoded_value);
-
-      if (rc != LMJCORE_SUCCESS) {
-        build_lmjcore_error_response(rc, response);
-        return -1;
-      }
-
-      op->result_body = strdup("{\"success\":true}");
-      op->result_body_len = strlen(op->result_body);
-      op->result_status = HTTP_STATUS_OK;
-      break;
-    }
-
-    case BATCH_OP_POST: {
-      if (entity_type == 0) {
-        // 对象不支持 POST（应该用 PUT）
-        build_error_response(HTTP_STATUS_BAD_REQUEST,
-                             "POST not supported for objects, use PUT",
-                             response);
-        return -1;
-      } else {
-        // 集合添加元素
-        if (!op->body_value) {
-          build_error_response(HTTP_STATUS_BAD_REQUEST,
-                               "POST requires value in body",
-                               response);
-          return -1;
-        }
-
-        // 编码值
-        size_t encoded_size = 1 + LMJCORE_PTR_LEN + op->body_value_len + 16;
-        uint8_t *encoded_value = (uint8_t *)malloc(encoded_size);
-        if (!encoded_value) {
-          RETURN_ERROR_NO_MEMORY(response);
-        }
-
-        size_t encoded_len = 0;
-        int rc = lmjcore_encode_value(op->body_value, op->body_value_len,
-                                      encoded_value, encoded_size, &encoded_len);
-        if (rc != LMJCORE_SUCCESS) {
-          free(encoded_value);
-          build_lmjcore_error_response(rc, response);
-          return -1;
-        }
-
-        // 添加元素到集合
-        rc = lmjcore_set_add(txn, obj_ptr, encoded_value, encoded_len);
-        free(encoded_value);
-
-        if (rc != LMJCORE_SUCCESS) {
-          build_lmjcore_error_response(rc, response);
-          return -1;
-        }
-
-        op->result_body = strdup("{\"success\":true}");
-        op->result_body_len = strlen(op->result_body);
-        op->result_status = HTTP_STATUS_OK;
-      }
-      break;
-    }
-
-    case BATCH_OP_DELETE: {
-      if (entity_type == 0) {
-        // 对象删除成员
-        if (!member_name) {
-          // 删除整个对象
-          int rc = lmjcore_obj_del(txn, obj_ptr);
-          if (rc != LMJCORE_SUCCESS) {
-            build_lmjcore_error_response(rc, response);
-            return -1;
-          }
-        } else {
-          // 删除成员
-          int rc = lmjcore_obj_member_del(txn, obj_ptr,
-                                          (const uint8_t *)member_name,
-                                          strlen(member_name));
-          if (rc == LMJCORE_ERROR_MEMBER_NOT_FOUND) {
-            RETURN_ERROR_MEMBER_NOT_FOUND(response);
-          }
-          if (rc != LMJCORE_SUCCESS) {
-            build_lmjcore_error_response(rc, response);
-            return -1;
-          }
-        }
-      } else {
-        // 集合删除（简化）
-        build_error_response(HTTP_STATUS_NOT_IMPLEMENTED,
-                             "DELETE for set not fully implemented",
-                             response);
-        return -1;
-      }
-
-      op->result_body = strdup("{\"success\":true}");
-      op->result_body_len = strlen(op->result_body);
-      op->result_status = HTTP_STATUS_OK;
-      break;
-    }
+  // 清理
+  if (body_str) free(body_str);
+  if (rc != 0 && result->status_code >= 400) {
+    return -1;
   }
-
   return 0;
 }
 
@@ -589,33 +265,67 @@ int handle_batch_operations(void *params, void *cbdata) {
   }
 
   // 解析请求体
-  bool readonly = false;
-  json_get_bool(hp->body, hp->body_len, "readonly", &readonly);
-
-  batch_operation_t *operations = NULL;
-  size_t op_count = 0;
-
-  if (parse_operations_array(hp->body, hp->body_len, &operations,
-                             &op_count) < 0 ||
-      op_count == 0) {
+  cJSON *root = cJSON_ParseWithOpts(hp->body, NULL, 0);
+  if (!root) {
     build_error_response(HTTP_STATUS_BAD_REQUEST,
-                         "Invalid or empty operations array",
-                         response);
+                         "Invalid JSON in request body", response);
     return -1;
   }
 
-  // 只读事务检查：是否包含写操作
+  if (!cJSON_IsObject(root)) {
+    cJSON_Delete(root);
+    build_error_response(HTTP_STATUS_BAD_REQUEST,
+                         "Request body must be a JSON object", response);
+    return -1;
+  }
+
+  // 获取 operations 数组
+  cJSON *operations = cJSON_GetObjectItemCaseSensitive(root, "operations");
+  if (!operations || !cJSON_IsArray(operations)) {
+    cJSON_Delete(root);
+    build_error_response(HTTP_STATUS_BAD_REQUEST,
+                         "Missing or invalid 'operations' array", response);
+    return -1;
+  }
+
+  int op_count = cJSON_GetArraySize(operations);
+  if (op_count <= 0) {
+    cJSON_Delete(root);
+    build_error_response(HTTP_STATUS_BAD_REQUEST,
+                         "Operations array is empty", response);
+    return -1;
+  }
+
+  if (op_count > MAX_OPERATIONS) {
+    cJSON_Delete(root);
+    build_error_response(HTTP_STATUS_BAD_REQUEST,
+                         "Too many operations (max 1000)", response);
+    return -1;
+  }
+
+  // 检查 readonly 标志
+  int readonly = 0;
+  cJSON *readonly_item = cJSON_GetObjectItemCaseSensitive(root, "readonly");
+  if (readonly_item && cJSON_IsBool(readonly_item)) {
+    readonly = cJSON_IsTrue(readonly_item);
+  }
+
+  // 只读事务检查
   if (readonly) {
-    for (size_t i = 0; i < op_count; i++) {
-      if (operations[i].method == BATCH_OP_PUT ||
-          operations[i].method == BATCH_OP_POST ||
-          operations[i].method == BATCH_OP_DELETE) {
-        build_error_response(
-            HTTP_STATUS_BAD_REQUEST,
-            "Readonly transaction cannot contain write operations",
-            response);
-        free(operations);
-        return -1;
+    cJSON *item = NULL;
+    cJSON_ArrayForEach(item, operations) {
+      if (!cJSON_IsObject(item)) continue;
+      cJSON *method_item = cJSON_GetObjectItemCaseSensitive(item, "method");
+      if (method_item && cJSON_IsString(method_item)) {
+        const char *method = method_item->valuestring;
+        if (strcmp(method, "PUT") == 0 || strcmp(method, "POST") == 0 ||
+            strcmp(method, "DELETE") == 0) {
+          cJSON_Delete(root);
+          build_error_response(HTTP_STATUS_BAD_REQUEST,
+                               "Readonly transaction cannot contain write operations",
+                               response);
+          return -1;
+        }
       }
     }
   }
@@ -625,117 +335,119 @@ int handle_batch_operations(void *params, void *cbdata) {
   int txn_flags = readonly ? LMJCORE_TXN_READONLY : 0;
   int rc = lmjcore_txn_begin(hp->env, NULL, txn_flags, &txn);
   if (rc != LMJCORE_SUCCESS || !txn) {
-    free(operations);
+    cJSON_Delete(root);
     RETURN_ERROR_TXN_FAILED("begin", response);
   }
 
-  // 执行所有操作
-  for (size_t i = 0; i < op_count; i++) {
-    // 检查事务超时
-    CHECK_TXN_TIMEOUT(hp, response, txn);
+  // 更新 hp->txn 供子处理器使用
+  hp->txn = txn;
+  hp->auto_manage_txn = false;
 
-    http_response_t op_response = {0};
-
-    if (execute_operation(txn, &operations[i], &op_response) != 0) {
-      // 操作失败，回滚事务
-      lmjcore_txn_abort(txn);
-
-      // 复制错误响应
-      operations[i].result_status = op_response.status_code;
-      if (op_response.body) {
-        operations[i].result_body = strdup(op_response.body);
-        operations[i].result_body_len = op_response.body_len;
-      }
-
-      // 构建错误响应
-      char *error_json = (char *)malloc(4096);
-      if (!error_json) {
-        free(operations);
-        RETURN_ERROR_NO_MEMORY(response);
-      }
-
-      int offset = snprintf(error_json, 4096,
-                            "{\"success\":false,\"error\":\"Operation %zu failed\",",
-                            i);
-      if (op_response.body) {
-        offset += snprintf(error_json + offset, 4096 - offset,
-                           "\"details\":%.*s",
-                           (int)op_response.body_len, op_response.body);
-      } else {
-        offset += snprintf(error_json + offset, 4096 - offset,
-                           "\"details\":null");
-      }
-      snprintf(error_json + offset, 4096 - offset, "}");
-
-      build_error_response(HTTP_STATUS_BAD_REQUEST, error_json, response);
-      free(error_json);
-      free(operations);
-      return -1;
-    }
-
-    // 释放临时响应
-    if (op_response.body) {
-      free(op_response.body);
-    }
-  }
-
-  // 提交事务（只读事务不需要提交，直接 abort）
-  if (readonly) {
+  // 分配结果数组
+  batch_result_t *results = (batch_result_t *)calloc((size_t)op_count, sizeof(batch_result_t));
+  if (!results) {
     lmjcore_txn_abort(txn);
-  } else {
-    rc = lmjcore_txn_commit(txn);
-    if (rc != LMJCORE_SUCCESS) {
-      lmjcore_txn_abort(txn);
-      free(operations);
-      RETURN_ERROR_TXN_FAILED("commit", response);
-    }
-  }
-
-  // 构建响应 JSON
-  size_t json_size = 8192;
-  char *json_buf = (char *)malloc(json_size);
-  if (!json_buf) {
-    free(operations);
+    cJSON_Delete(root);
     RETURN_ERROR_NO_MEMORY(response);
   }
 
-  int offset = snprintf(json_buf, json_size,
-                        "{\"success\":true,\"results\":[");
+  // 执行所有操作
+  int failed_index = -1;
+  cJSON *item = NULL;
+  int index = 0;
 
-  for (size_t i = 0; i < op_count; i++) {
-    // 检查缓冲区空间
-    while ((size_t)offset + 1024 + operations[i].result_body_len >= json_size) {
-      json_size *= 2;
-      char *new_buf = (char *)realloc(json_buf, json_size);
-      if (!new_buf) {
-        free(json_buf);
-        free(operations);
-        RETURN_ERROR_NO_MEMORY(response);
-      }
-      json_buf = new_buf;
+  cJSON_ArrayForEach(item, operations) {
+    if (index >= op_count) break;
+
+    // 检查事务超时
+    CHECK_TXN_TIMEOUT(hp, response);
+
+    if (!cJSON_IsObject(item)) {
+      results[index].status_code = HTTP_STATUS_BAD_REQUEST;
+      results[index].body = strdup("{\"error\":\"Invalid operation format\"}");
+      results[index].body_len = strlen(results[index].body);
+      failed_index = index;
+      break;
     }
 
-    offset += snprintf(json_buf + offset, json_size - offset,
-                       "%s{\"status\":%d,\"body\":%.*s}",
-                       i > 0 ? "," : "",
-                       operations[i].result_status,
-                       (int)operations[i].result_body_len,
-                       operations[i].result_body);
+    if (execute_operation(hp, item, &results[index]) != 0) {
+      failed_index = index;
+      break;
+    }
+
+    index++;
   }
 
-  offset += snprintf(json_buf + offset, json_size - offset, "]}");
+  // 处理结果
+  if (failed_index >= 0) {
+    // 回滚事务
+    lmjcore_txn_abort(txn);
+
+    // 构建错误响应
+    cJSON *error = cJSON_CreateObject();
+    cJSON_AddBoolToObject(error, "success", false);
+    cJSON_AddNumberToObject(error, "failed_at", failed_index);
+
+    if (results[failed_index].body) {
+      cJSON *details = cJSON_Parse(results[failed_index].body);
+      if (details) {
+        cJSON_AddItemToObject(error, "details", details);
+      } else {
+        cJSON_AddStringToObject(error, "details", results[failed_index].body);
+      }
+    }
+
+    char *error_json = cJSON_PrintUnformatted(error);
+    build_error_response(HTTP_STATUS_BAD_REQUEST, error_json, response);
+    free(error_json);
+    cJSON_Delete(error);
+
+  } else {
+    // 提交事务
+    if (readonly) {
+      lmjcore_txn_abort(txn);
+    } else {
+      rc = lmjcore_txn_commit(txn);
+      if (rc != LMJCORE_SUCCESS) {
+        lmjcore_txn_abort(txn);
+        build_error_response(HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                             "Failed to commit transaction", response);
+        cJSON_Delete(root);
+        free(results);
+        return -1;
+      }
+    }
+
+    // 构建成功响应
+    cJSON *result_obj = cJSON_CreateObject();
+    cJSON_AddBoolToObject(result_obj, "success", true);
+    cJSON *results_array = cJSON_AddArrayToObject(result_obj, "results");
+
+    for (int i = 0; i < op_count; i++) {
+      cJSON *result_item = cJSON_CreateObject();
+      cJSON_AddNumberToObject(result_item, "status", results[i].status_code);
+
+      cJSON *body_json = cJSON_Parse(results[i].body);
+      if (body_json) {
+        cJSON_AddItemToObject(result_item, "body", body_json);
+      } else {
+        cJSON_AddStringToObject(result_item, "body", results[i].body);
+      }
+
+      cJSON_AddItemToArray(results_array, result_item);
+      free(results[i].body);
+    }
+
+    response->status_code = HTTP_STATUS_OK;
+    response->body = cJSON_PrintUnformatted(result_obj);
+    response->body_len = strlen(response->body);
+
+    cJSON_Delete(result_obj);
+  }
 
   // 清理
-  for (size_t i = 0; i < op_count; i++) {
-    if (operations[i].result_body) {
-      free(operations[i].result_body);
-    }
-  }
-  free(operations);
-
-  response->status_code = HTTP_STATUS_OK;
-  response->body = json_buf;
-  response->body_len = strlen(json_buf);
+  free(results);
+  cJSON_Delete(root);
 
   return 0;
 }

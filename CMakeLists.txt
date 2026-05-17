@@ -107,6 +107,11 @@ set(ALL_SOURCES
 # -----------------------------------------------------------
 add_executable(lmjcore_server ${ALL_SOURCES})
 
+# -----------------------------------------------------------
+# 2.5 添加 cJSON 子模块 (JSON 解析库)
+# -----------------------------------------------------------
+add_subdirectory(${THIRDPARTY_DIR}/cJSON)
+
 # 查找系统 llhttp 库
 find_path(LLHTTP_INCLUDE_DIR
     NAMES llhttp.h
@@ -134,6 +139,7 @@ target_include_directories(lmjcore_server PRIVATE
     ${THIRDPARTY_DIR}/LMJCore/core/include
     ${THIRDPARTY_DIR}/LMJCore/Toolkit/ptr_uuid_gen/include
     ${THIRDPARTY_DIR}/URLRouter/include
+    ${THIRDPARTY_DIR}/cJSON
 )
 
 # -----------------------------------------------------------
@@ -147,7 +153,10 @@ target_link_libraries(lmjcore_server
     # 2. llhttp HTTP 解析库（系统库）
     ${LLHTTP_LIBRARY}
 
-    # 3. 再链接系统库
+    # 3. cJSON JSON 解析库（子模块，库名为小写 cjson）
+    cjson
+
+    # 4. 再链接系统库
     # pthread, rt, m 等系统库通常放在后面
     pthread
     rt

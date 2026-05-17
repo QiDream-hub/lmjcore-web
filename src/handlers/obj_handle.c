@@ -1,4 +1,5 @@
 // src/handlers/obj_handle.c - 对象相关 HTTP 处理器
+#include "cJSON.h"
 #include "error_response.h"
 #include "handle_utils.h"
 #include "lmjcore.h"
@@ -7,6 +8,43 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+// ==================== 事务管理宏 ====================
+
+/**
+ * @brief 自动或手动管理事务
+ * 如果 hp->txn 已设置，则使用外部事务（不自动提交/回滚）
+ * 否则创建新事务并自动管理
+ */
+#define TXN_BEGIN(txn, hp, flags, response, cleanup_label)                    \
+  do {                                                                        \
+    if ((hp)->txn) {                                                          \
+      txn = (hp)->txn;                                                        \
+    } else {                                                                  \
+      int rc = lmjcore_txn_begin((hp)->env, NULL, flags, &txn);               \
+      if (rc != LMJCORE_SUCCESS || !txn) {                                    \
+        RETURN_ERROR_TXN_FAILED("begin", response);                           \
+      }                                                                       \
+    }                                                                         \
+  } while (0)
+
+#define TXN_COMMIT(txn, hp, response, cleanup_label)                          \
+  do {                                                                        \
+    if (!(hp)->txn) {                                                         \
+      int rc = lmjcore_txn_commit(txn);                                       \
+      if (rc != LMJCORE_SUCCESS) {                                            \
+        lmjcore_txn_abort(txn);                                               \
+        goto cleanup_label;                                                   \
+      }                                                                       \
+    }                                                                         \
+  } while (0)
+
+#define TXN_ABORT(txn, hp)                                                    \
+  do {                                                                        \
+    if (!(hp)->txn) {                                                         \
+      lmjcore_txn_abort(txn);                                                 \
+    }                                                                         \
+  } while (0)
 
 // ==================== 事务超时检查宏 ====================
 
@@ -356,17 +394,24 @@ int handle_obj_member_put(void *params, void *cbdata) {
   }
 
   // 解析请求体获取 value
-  char *value_str = NULL;
-  size_t value_len = 0;
-  if (json_get_string(hp->body, hp->body_len, "value", &value_str,
-                      &value_len) != 0) {
+  cJSON *body = cJSON_Parse(hp->body);
+  if (!body) {
     RETURN_ERROR_BODY_PARSE(response);
   }
+
+  cJSON *value_item = cJSON_GetObjectItemCaseSensitive(body, "value");
+  if (!value_item || !cJSON_IsString(value_item)) {
+    cJSON_Delete(body);
+    RETURN_ERROR_BODY_PARSE(response);
+  }
+
+  const char *value_str = value_item->valuestring;
+  size_t value_len = strlen(value_str);
 
   // 转换指针
   lmjcore_ptr obj_ptr;
   if (lmjcore_ptr_from_string(ptr_str, obj_ptr) != LMJCORE_SUCCESS) {
-    free(value_str);
+    cJSON_Delete(body);
     RETURN_ERROR_INVALID_PTR(response);
   }
 
@@ -374,7 +419,7 @@ int handle_obj_member_put(void *params, void *cbdata) {
   lmjcore_txn *txn = NULL;
   int rc = lmjcore_txn_begin(hp->env, NULL, 0, &txn);
   if (rc != LMJCORE_SUCCESS || !txn) {
-    free(value_str);
+    cJSON_Delete(body);
     RETURN_ERROR_TXN_FAILED("begin", response);
   }
 
@@ -385,7 +430,7 @@ int handle_obj_member_put(void *params, void *cbdata) {
   int exists = lmjcore_entity_exist(txn, obj_ptr);
   if (exists != 1) {
     lmjcore_txn_abort(txn);
-    free(value_str);
+    cJSON_Delete(body);
     RETURN_ERROR_NOT_FOUND("Object", response);
   }
 
@@ -394,18 +439,18 @@ int handle_obj_member_put(void *params, void *cbdata) {
   uint8_t *encoded_value = (uint8_t *)malloc(encoded_size);
   if (!encoded_value) {
     lmjcore_txn_abort(txn);
-    free(value_str);
+    cJSON_Delete(body);
     RETURN_ERROR_NO_MEMORY(response);
   }
 
   size_t encoded_len = 0;
   rc = lmjcore_encode_value(value_str, value_len, encoded_value, encoded_size,
                             &encoded_len);
-  free(value_str);
 
   if (rc != LMJCORE_SUCCESS) {
     lmjcore_txn_abort(txn);
     free(encoded_value);
+    cJSON_Delete(body);
     build_lmjcore_error_response(rc, response);
     return -1;
   }
@@ -417,6 +462,7 @@ int handle_obj_member_put(void *params, void *cbdata) {
 
   if (rc != LMJCORE_SUCCESS) {
     lmjcore_txn_abort(txn);
+    cJSON_Delete(body);
     build_lmjcore_error_response(rc, response);
     return -1;
   }
@@ -425,9 +471,11 @@ int handle_obj_member_put(void *params, void *cbdata) {
   rc = lmjcore_txn_commit(txn);
   if (rc != LMJCORE_SUCCESS) {
     lmjcore_txn_abort(txn);
+    cJSON_Delete(body);
     RETURN_ERROR_TXN_FAILED("commit", response);
   }
 
+  cJSON_Delete(body);
   return build_success_response(HTTP_STATUS_OK, "{\"success\":true}", response);
 }
 

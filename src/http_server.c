@@ -182,10 +182,12 @@ static THREAD_RETURN_TYPE handle_connection_thread(void *arg) {
 
             handle_params_t h_params = {.params = &params,
                                         .env = server->env,
+                                        .txn = NULL,              // 默认无外部事务
                                         .body = request->body,
                                         .body_len = request->body_len,
                                         .txn_timeout = server->config.txn_timeout,
-                                        .txn_start_time = lmjcore_txn_get_start_time()};
+                                        .txn_start_time = lmjcore_txn_get_start_time(),
+                                        .auto_manage_txn = true};  // 默认自动管理事务
 
             int handler_result = handler(&h_params, &response);
 

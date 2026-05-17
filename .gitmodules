@@ -4,3 +4,6 @@
 [submodule "thirdparty/URLRouter"]
 	path = thirdparty/URLRouter
 	url = git@github.com:QiDream-hub/URLRouter.git
+[submodule "thirdparty/cJSON"]
+	path = thirdparty/cJSON
+	url = https://github.com/DaveGamble/cJSON.git

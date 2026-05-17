@@ -79,6 +79,7 @@ typedef struct {
   route_params_t *params;
   lmjcore_env *env;
   lmjcore_txn *txn;        // 可选：外部传入的事务（批量操作时共享）
+  router_t *router;        // 可选：路由器（批量操作时使用）
   char *body;              // 请求体
   size_t body_len;         // 请求体长度
   int txn_timeout;         // 事务超时时间（秒）

@@ -493,10 +493,15 @@
                 <div class="api-title">批量操作说明</div>
                 <div class="api-path"><span class="api-method method-post">POST</span>/batch</div>
                 <p style="margin-bottom: 15px; color: #666; font-size: 14px;">
-                    批量操作允许在单个请求中执行多个操作，所有操作共享同一个事务。支持的操作类型：
-                    <code>obj_create</code>, <code>obj_set</code>, <code>obj_del</code>, 
-                    <code>set_create</code>, <code>set_add</code>, <code>set_remove</code>
+                    批量操作允许在单个请求中执行多个操作，所有操作共享同一个事务。
+                    每个操作需指定 <code>method</code> 和 <code>path</code>，可选 <code>body</code>。
                 </p>
+                <div style="background: #fff3cd; border: 1px solid #ffc107; padding: 10px 15px; border-radius: 4px; margin-bottom: 15px; font-size: 13px;">
+                    <strong>⚠️ 注意事项:</strong><br>
+                    • 不支持别名（alias）功能，每个操作必须指定完整的指针路径<br>
+                    • 如需引用新创建的对象，需分两步：先创建获取指针，再使用指针执行批量操作<br>
+                    • 所有操作在同一事务内执行，失败则全部回滚
+                </div>
             </div>
 
             <div class="api-section">
@@ -504,20 +509,25 @@
                 <div class="form-group">
                     <label>操作列表 (JSON 数组):</label>
                     <textarea id="batchOperations" placeholder='[
-  {"type": "obj_create", "alias": "user"},
-  {"type": "obj_set", "target": "user", "member": "name", "value": "Alice"},
-  {"type": "obj_set", "target": "user", "member": "age", "value": "30"},
-  {"type": "set_create", "alias": "tags"},
-  {"type": "set_add", "target": "tags", "value": "admin"}
+  {
+    "method": "POST",
+    "path": "/obj"
+  },
+  {
+    "method": "GET",
+    "path": "/obj/01abc123def456..."
+  },
+  {
+    "method": "PUT",
+    "path": "/obj/01abc123def456.../name",
+    "body": {"value": "Alice"}
+  }
 ]'></textarea>
                     <div class="hint">
-                        <strong>操作类型说明:</strong><br>
-                        • <code>obj_create</code>: 创建对象，需指定 <code>alias</code> (别名用于后续引用)<br>
-                        • <code>obj_set</code>: 设置对象成员，需指定 <code>target</code> (指针或别名), <code>member</code>, <code>value</code><br>
-                        • <code>obj_del</code>: 删除对象成员，需指定 <code>target</code>, <code>member</code><br>
-                        • <code>set_create</code>: 创建集合，需指定 <code>alias</code><br>
-                        • <code>set_add</code>: 添加集合元素，需指定 <code>target</code>, <code>value</code><br>
-                        • <code>set_remove</code>: 删除集合元素，需指定 <code>target</code>, <code>value</code>
+                        <strong>操作格式说明:</strong><br>
+                        • <code>method</code>: HTTP 方法 (GET, POST, PUT, DELETE)<br>
+                        • <code>path</code>: 完整路径，如 <code>/obj</code>, <code>/obj/{ptr}</code>, <code>/obj/{ptr}/{member}</code>, <code>/set/{ptr}</code>, <code>/set/{ptr}/elements</code><br>
+                        • <code>body</code>: 可选，仅 PUT/POST 需要，格式 <code>{"value": "..."}</code>
                     </div>
                 </div>
                 <div class="btn-group">
@@ -528,7 +538,7 @@
             </div>
 
             <div class="api-section">
-                <div class="api-title">14. 快速测试：创建用户并设置属性</div>
+                <div class="api-title">14. 快速测试：创建对象并设置属性</div>
                 <div class="form-row">
                     <div class="form-group">
                         <label>用户名:</label>
@@ -540,7 +550,8 @@
                     </div>
                 </div>
                 <div class="btn-group">
-                    <button class="btn btn-primary" onclick="createUserBatch()">创建用户</button>
+                    <button class="btn btn-primary" onclick="createUserBatch()">创建并设置属性</button>
+                    <button class="btn btn-secondary" onclick="createUserBatchWithSteps()">分步执行</button>
                 </div>
                 <div class="response-box" id="createUserResponse" style="display: none;"></div>
             </div>
@@ -695,8 +706,7 @@
             const options = {
                 method,
                 headers: {
-                    // 'Content-Type': 'application/json'
-                    'Content-Type': 'text/plain'
+                    'Content-Type': 'application/json'
                 }
             };
             if (body) {
@@ -906,14 +916,29 @@
 
         // 填充示例数据
         function fillBatchExample() {
+            if (!savedPtrs.obj) {
+                alert('提示：请先创建对象并保存指针，然后使用此功能');
+            }
+            const ptr = savedPtrs.obj || '${PTR}';
             const example = JSON.stringify([
-                {"type": "obj_create", "alias": "user"},
-                {"type": "obj_set", "target": "user", "member": "name", "value": "Alice"},
-                {"type": "obj_set", "target": "user", "member": "age", "value": "30"},
-                {"type": "obj_set", "target": "user", "member": "email", "value": "alice@example.com"},
-                {"type": "set_create", "alias": "tags"},
-                {"type": "set_add", "target": "tags", "value": "admin"},
-                {"type": "set_add", "target": "tags", "value": "vip"}
+                {
+                    "method": "GET",
+                    "path": `/obj/${ptr}`
+                },
+                {
+                    "method": "PUT",
+                    "path": `/obj/${ptr}/name`,
+                    "body": {"value": "Alice"}
+                },
+                {
+                    "method": "PUT",
+                    "path": `/obj/${ptr}/age`,
+                    "body": {"value": "30"}
+                },
+                {
+                    "method": "GET",
+                    "path": `/obj/${ptr}`
+                }
             ], null, 2);
             document.getElementById('batchOperations').value = example;
         }
@@ -939,24 +964,34 @@
                 return;
             }
 
+            // 检查路径中是否包含未替换的 ${PTR}
+            for (let i = 0; i < operations.length; i++) {
+                if (operations[i].path && operations[i].path.includes('${PTR}')) {
+                    showResponse('batchResponse', 0, '路径错误', { 
+                        error: '操作路径中包含未替换的 ${PTR}，请先创建对象并保存指针，或手动替换路径' 
+                    }, true);
+                    return;
+                }
+            }
+
             try {
-                // 清空之前的批量指针映射
-                batchPtrMap = {};
+                console.log('发送批量请求:', JSON.stringify({ operations: operations }, null, 2));
                 
-                const result = await apiRequest(getBaseUrl() + '/batch', 'POST', operations);
-                
+                // 包装成服务器期望的格式：{ "operations": [...] }
+                const requestBody = { operations: operations };
+                const result = await apiRequest(getBaseUrl() + '/batch', 'POST', requestBody);
+
+                console.log('批量响应:', result);
+
                 // 保存批量操作返回的指针
                 if (result.data && result.data.results) {
                     result.data.results.forEach((r, index) => {
-                        if (r.status_code === 200 && r.body) {
+                        if (r.status === 200 && r.body) {
                             try {
                                 const body = typeof r.body === 'string' ? JSON.parse(r.body) : r.body;
                                 if (body.ptr) {
-                                    // 如果有别名，保存别名映射
-                                    const op = operations[index];
-                                    if (op && op.alias) {
-                                        batchPtrMap[op.alias] = body.ptr;
-                                    }
+                                    savedPtrs.obj = body.ptr;
+                                    updateSavedInfo();
                                 }
                             } catch (e) {
                                 // 忽略解析错误
@@ -964,47 +999,82 @@
                         }
                     });
                 }
-                
+
                 showResponse('batchResponse', result.status, result.statusText, result.data, result.status !== 200);
             } catch (err) {
+                console.error('批量请求失败:', err);
                 showResponse('batchResponse', 0, err.message, { error: err.message }, true);
             }
         }
 
-        // 快速创建用户
+        // 快速创建用户（分步：先创建，再设置属性）
         async function createUserBatch() {
             const username = document.getElementById('batchUsername').value.trim() || 'Alice';
             const age = document.getElementById('batchUserAge').value.trim() || '30';
 
-            const operations = [
-                {"type": "obj_create", "alias": "user"},
-                {"type": "obj_set", "target": "user", "member": "name", "value": username},
-                {"type": "obj_set", "target": "user", "member": "age", "value": age},
-                {"type": "obj_set", "target": "user", "member": "createdAt", "value": new Date().toISOString()}
-            ];
-
+            // 第一步：创建对象
             try {
-                batchPtrMap = {};
-                const result = await apiRequest(getBaseUrl() + '/batch', 'POST', operations);
-                
-                // 保存用户指针
-                if (result.data && result.data.results && result.data.results[0]) {
-                    const firstResult = result.data.results[0];
-                    if (firstResult.status_code === 200 && firstResult.body) {
-                        try {
-                            const body = typeof firstResult.body === 'string' ? JSON.parse(firstResult.body) : firstResult.body;
-                            if (body.ptr) {
-                                batchPtrMap['user'] = body.ptr;
-                                savedPtrs.obj = body.ptr;
-                                updateSavedInfo();
-                            }
-                        } catch (e) {
-                            // 忽略
-                        }
-                    }
+                const createResult = await apiRequest(getBaseUrl() + '/obj', 'POST');
+                if (createResult.status !== 200) {
+                    showResponse('createUserResponse', createResult.status, createResult.statusText, createResult.data, true);
+                    return;
                 }
-                
+
+                const ptr = createResult.data.ptr;
+                if (!ptr) {
+                    showResponse('createUserResponse', 0, 'Error', { error: '未返回指针' }, true);
+                    return;
+                }
+
+                // 保存指针
+                savedPtrs.obj = ptr;
+                updateSavedInfo();
+
+                // 第二步：批量设置属性
+                const operations = [
+                    {
+                        "method": "PUT",
+                        "path": `/obj/${ptr}/name`,
+                        "body": {"value": username}
+                    },
+                    {
+                        "method": "PUT",
+                        "path": `/obj/${ptr}/age`,
+                        "body": {"value": age}
+                    },
+                    {
+                        "method": "PUT",
+                        "path": `/obj/${ptr}/createdAt`,
+                        "body": {"value": new Date().toISOString()}
+                    }
+                ];
+
+                const requestBody = { operations: operations };
+                const setResult = await apiRequest(getBaseUrl() + '/batch', 'POST', requestBody);
+
+                // 合并响应显示
+                const combinedResponse = {
+                    created: createResult.data,
+                    attributesSet: setResult.data
+                };
+
+                showResponse('createUserResponse', setResult.status, setResult.statusText, combinedResponse, setResult.status !== 200);
+            } catch (err) {
+                showResponse('createUserResponse', 0, err.message, { error: err.message }, true);
+            }
+        }
+
+        // 分步执行：仅创建对象
+        async function createUserBatchWithSteps() {
+            try {
+                const result = await apiRequest(getBaseUrl() + '/obj', 'POST');
                 showResponse('createUserResponse', result.status, result.statusText, result.data, result.status !== 200);
+
+                if (result.status === 200 && result.data.ptr) {
+                    savedPtrs.obj = result.data.ptr;
+                    updateSavedInfo();
+                    alert('对象已创建，指针已保存。现在可以使用保存的指针执行批量设置属性操作。');
+                }
             } catch (err) {
                 showResponse('createUserResponse', 0, err.message, { error: err.message }, true);
             }

@@ -144,6 +144,64 @@ Content-Type: application/json
 - `status` 字段为该操作的 HTTP 状态码
 - `body` 字段为该操作的响应体（自动解析为 JSON 对象或保留为字符串）
 
+**使用示例**
+
+示例 1：批量设置对象属性
+```json
+{
+  "operations": [
+    {
+      "method": "PUT",
+      "path": "/obj/01abc123def456789012345678901234/name",
+      "body": {"value": "Alice"}
+    },
+    {
+      "method": "PUT",
+      "path": "/obj/01abc123def456789012345678901234/age",
+      "body": {"value": "30"}
+    },
+    {
+      "method": "GET",
+      "path": "/obj/01abc123def456789012345678901234"
+    }
+  ]
+}
+```
+
+示例 2：创建对象后批量设置（需要客户端先获取指针）
+```bash
+# 步骤 1：创建对象，获取指针
+curl -X POST http://localhost:8080/obj
+# 返回：{"ptr": "01abc123def456789012345678901234"}
+
+# 步骤 2：使用指针批量设置属性
+curl -X POST http://localhost:8080/batch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operations": [
+      {"method": "PUT", "path": "/obj/01abc123.../name", "body": {"value": "Alice"}},
+      {"method": "PUT", "path": "/obj/01abc123.../age", "body": {"value": "30"}}
+    ]
+  }'
+```
+
+示例 3：只读事务批量查询
+```json
+{
+  "readonly": true,
+  "operations": [
+    {"method": "GET", "path": "/obj/01abc123..."},
+    {"method": "GET", "path": "/obj/01abc123.../name"},
+    {"method": "GET", "path": "/set/02def456..."}
+  ]
+}
+```
+
+**注意事项**
+- 批量操作**不支持别名引用**：每个操作的 `path` 必须使用完整的指针字符串
+- 如需在批量操作中引用新创建的对象指针，需分两步：先创建获取指针，再批量操作
+- 失败时事务自动回滚，已执行的操作不会生效
+
 ---
 
 ## 对象操作 API

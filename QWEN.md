@@ -152,16 +152,49 @@ curl http://localhost:8080/obj/{ptr}
 {
   "readonly": false,
   "operations": [
+    {"method": "POST", "path": "/obj"},
+    {"method": "GET", "path": "/obj/01abc..."},
     {"method": "PUT", "path": "/obj/01abc.../name", "body": {"value": "hello"}},
-    {"method": "GET", "path": "/obj/01abc..."}
+    {"method": "DELETE", "path": "/obj/01abc.../age"}
   ]
 }
 ```
 
 **特性**:
 - **原子性**: 所有操作在同一事务内执行，要么全部成功，要么全部回滚
-- **写事务**: 支持所有操作，限制总时长（默认 5 秒超时）
+- **写事务**: 默认模式，支持所有操作，限制总时长（默认 5 秒超时）
 - **只读事务**: `readonly: true` 时，不允许写操作（PUT/POST/DELETE）
+
+**重要说明**:
+- **不支持别名（alias）功能**：每个操作必须指定完整的指针路径
+- 如需在批量操作中引用新创建的对象，需分两步：
+  1. 先执行创建操作获取指针
+  2. 再使用指针执行后续批量操作
+- 支持的操作路径格式：
+  - `/obj` - 创建对象（仅 POST）
+  - `/obj/{ptr}` - 获取/删除对象
+  - `/obj/{ptr}/{member}` - 获取/设置/删除成员
+  - `/set` - 创建集合（仅 POST）
+  - `/set/{ptr}` - 获取/删除集合
+  - `/set/{ptr}/elements` - 添加/删除元素
+
+**示例**:
+```bash
+# 创建对象并设置属性（两步）
+# 第一步：创建对象
+curl -X POST http://localhost:8080/obj
+# 返回：{"ptr":"01abc..."}
+
+# 第二步：批量设置属性
+curl -X POST http://localhost:8080/batch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operations": [
+      {"method": "PUT", "path": "/obj/01abc.../name", "body": {"value": "Alice"}},
+      {"method": "PUT", "path": "/obj/01abc.../age", "body": {"value": "30"}}
+    ]
+  }'
+```
 
 ---
 

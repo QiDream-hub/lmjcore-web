@@ -4,6 +4,7 @@
 #include "handle_utils.h"
 #include "lmjcore.h"
 #include "lmjcore_handle.h"
+#include "router.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -66,76 +67,55 @@ static int execute_operation(handle_params_t *hp, const cJSON *op_obj,
   const char *method_str = method_item->valuestring;
   const char *path = path_item->valuestring;
 
-  // 解析路径，确定处理器
-  // 格式：/obj/{ptr}、/obj/{ptr}/{member}、/set/{ptr}、/set/{ptr}/elements
-  const char *entity_type = NULL;
-  const char *ptr_str = NULL;
-  const char *sub_path = NULL;
-
-  if (strncmp(path, "/obj/", 5) == 0) {
-    entity_type = "obj";
-    ptr_str = path + 5;
-  } else if (strncmp(path, "/set/", 5) == 0) {
-    entity_type = "set";
-    ptr_str = path + 5;
+  // 解析 HTTP 方法
+  http_method_t method;
+  if (strcmp(method_str, "GET") == 0) {
+    method = HTTP_GET;
+  } else if (strcmp(method_str, "POST") == 0) {
+    method = HTTP_POST;
+  } else if (strcmp(method_str, "PUT") == 0) {
+    method = HTTP_PUT;
+  } else if (strcmp(method_str, "DELETE") == 0) {
+    method = HTTP_DELETE;
   } else {
     result->status_code = HTTP_STATUS_BAD_REQUEST;
-    result->body = strdup("{\"error\":\"Invalid path prefix\"}");
+    result->body = strdup("{\"error\":\"Invalid HTTP method\"}");
     result->body_len = strlen(result->body);
     return -1;
   }
 
-  // 查找第二个斜杠
-  const char *slash = strchr(ptr_str, '/');
-  if (slash) {
-    sub_path = slash + 1;
-  }
-
-  // 构建 route_params（模拟路由解析结果）
-  route_param_t params_arr[2] = {{0}};
-  route_params_t route_params = {0};
-
-  char ptr_buf[64] = {0};
-  char member_buf[512] = {0};
-
-  // 提取 ptr
-  size_t ptr_len = slash ? (size_t)(slash - ptr_str) : strlen(ptr_str);
-  if (ptr_len != LMJCORE_PTR_STRING_LEN) {
-    result->status_code = HTTP_STATUS_BAD_REQUEST;
-    result->body = strdup("{\"error\":\"Invalid pointer length\"}");
+  // 使用路由器匹配路径（复用 routes.c 中注册的路由）
+  if (!hp->router) {
+    result->status_code = HTTP_STATUS_INTERNAL_SERVER_ERROR;
+    result->body = strdup("{\"error\":\"Router not configured\"}");
     result->body_len = strlen(result->body);
     return -1;
   }
-  memcpy(ptr_buf, ptr_str, ptr_len);
-  params_arr[0].ptr = ptr_buf;
-  params_arr[0].len = ptr_len;
 
-  // 提取 member（如果有）
-  if (sub_path) {
-    size_t member_len = strlen(sub_path);
-    if (member_len >= sizeof(member_buf)) {
-      result->status_code = HTTP_STATUS_BAD_REQUEST;
-      result->body = strdup("{\"error\":\"Member name too long\"}");
-      result->body_len = strlen(result->body);
-      return -1;
-    }
-    // URL 解码
-    if (url_decode(sub_path, member_len, member_buf, sizeof(member_buf)) < 0) {
-      result->status_code = HTTP_STATUS_BAD_REQUEST;
-      result->body = strdup("{\"error\":\"Invalid member name\"}");
-      result->body_len = strlen(result->body);
-      return -1;
-    }
-    params_arr[1].ptr = member_buf;
-    params_arr[1].len = strlen(member_buf);
-    route_params.count = 2;
-  } else {
-    route_params.count = 1;
+  route_node_t *node = router_match(hp->router, method, path);
+  if (!node) {
+    result->status_code = HTTP_STATUS_NOT_FOUND;
+    result->body = strdup("{\"error\":\"Route not found\"}");
+    result->body_len = strlen(result->body);
+    return -1;
   }
 
-  route_params.params = params_arr;
+  // 提取路由参数
+  route_param_t param_storage[2];
+  route_params_t params = {0};
+  size_t param_count = 0;
 
-  // 构建 body（如果有）
+  if (router_extract(node, path, param_storage, 2, &param_count) != 0) {
+    result->status_code = HTTP_STATUS_INTERNAL_SERVER_ERROR;
+    result->body = strdup("{\"error\":\"Failed to extract route params\"}");
+    result->body_len = strlen(result->body);
+    return -1;
+  }
+
+  params.params = param_storage;
+  params.count = param_count;
+
+  // 解析 body（如果有）
   char *body_str = NULL;
   cJSON *body_item = cJSON_GetObjectItemCaseSensitive(op_obj, "body");
   if (body_item && cJSON_IsObject(body_item)) {
@@ -150,9 +130,10 @@ static int execute_operation(handle_params_t *hp, const cJSON *op_obj,
 
   // 构建 handle_params
   handle_params_t local_params = {
-    .params = &route_params,
+    .params = &params,
     .env = hp->env,
     .txn = hp->txn,           // 共享事务
+    .router = hp->router,     // 传递路由器（嵌套批量操作时使用）
     .body = body_str,
     .body_len = body_str ? strlen(body_str) : 0,
     .txn_timeout = hp->txn_timeout,
@@ -163,64 +144,11 @@ static int execute_operation(handle_params_t *hp, const cJSON *op_obj,
   // 响应
   http_response_t response = {0};
 
-  // 确定并调用处理器
-  handler_fn handler = NULL;
-
-  if (strcmp(entity_type, "obj") == 0) {
-    // 对象操作
-    if (strcmp(method_str, "GET") == 0) {
-      if (sub_path) {
-        handler = handle_obj_member_get;
-      } else {
-        handler = handle_obj_get;
-      }
-    } else if (strcmp(method_str, "PUT") == 0) {
-      if (sub_path) {
-        handler = handle_obj_member_put;
-      }
-    } else if (strcmp(method_str, "POST") == 0) {
-      // 对象不支持 POST
-      result->status_code = HTTP_STATUS_BAD_REQUEST;
-      result->body = strdup("{\"error\":\"POST not supported for objects\"}");
-      result->body_len = strlen(result->body);
-      if (body_str) free(body_str);
-      return -1;
-    } else if (strcmp(method_str, "DELETE") == 0) {
-      if (sub_path) {
-        handler = handle_obj_member_del;
-      } else {
-        handler = handle_obj_del;
-      }
-    }
-  } else {
-    // 集合操作
-    if (strcmp(method_str, "GET") == 0) {
-      if (strcmp(sub_path ? sub_path : "", "elements") == 0) {
-        // GET /set/{ptr}/elements 不支持
-        result->status_code = HTTP_STATUS_BAD_REQUEST;
-        result->body = strdup("{\"error\":\"GET /set/{ptr}/elements not supported\"}");
-        result->body_len = strlen(result->body);
-        if (body_str) free(body_str);
-        return -1;
-      } else {
-        handler = handle_set_get;
-      }
-    } else if (strcmp(method_str, "POST") == 0) {
-      if (sub_path && strcmp(sub_path, "elements") == 0) {
-        handler = handle_set_add;
-      }
-    } else if (strcmp(method_str, "DELETE") == 0) {
-      if (sub_path && strcmp(sub_path, "elements") == 0) {
-        handler = handle_set_remove;
-      } else {
-        handler = handle_set_del;
-      }
-    }
-  }
-
+  // 获取并调用处理器
+  handler_fn handler = (handler_fn)router_get_callback(node);
   if (!handler) {
-    result->status_code = HTTP_STATUS_BAD_REQUEST;
-    result->body = strdup("{\"error\":\"Invalid method for this path\"}");
+    result->status_code = HTTP_STATUS_INTERNAL_SERVER_ERROR;
+    result->body = strdup("{\"error\":\"Handler not found\"}");
     result->body_len = strlen(result->body);
     if (body_str) free(body_str);
     return -1;
@@ -350,7 +278,7 @@ int handle_batch_operations(void *params, void *cbdata) {
   cJSON_ArrayForEach(item, operations) {
     if (index >= op_count) break;
 
-    // 检查事务超时（txn 为 NULL，因为批量操作使用共享事务）
+    // 检查事务超时
     if (lmjcore_txn_check_timeout(hp->txn_start_time, hp->txn_timeout)) {
       RETURN_ERROR_TXN_TIMEOUT(response);
     }
@@ -390,11 +318,16 @@ int handle_batch_operations(void *params, void *cbdata) {
       }
     }
 
-    char *error_json = cJSON_PrintUnformatted(error);
-    build_error_response(HTTP_STATUS_BAD_REQUEST, error_json, response);
-    free(error_json);
+    // 直接设置响应，避免 build_error_response 再次转义 JSON
+    response->status_code = HTTP_STATUS_BAD_REQUEST;
+    response->body = cJSON_PrintUnformatted(error);
+    response->body_len = strlen(response->body);
     cJSON_Delete(error);
 
+    // 清理
+    free(results);
+    cJSON_Delete(root);
+    return -1;
   } else {
     // 提交事务
     if (readonly) {

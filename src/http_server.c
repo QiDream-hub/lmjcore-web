@@ -1,7 +1,9 @@
 #include "http_server.h"
 #include "handle_utils.h"
+#include "lmjcore_handle.h"
 #include "log.h"
 #include "lmjcore.h"
+#include "routes.h"
 #include <errno.h>
 #include <pthread.h>
 #include <signal.h>
@@ -183,6 +185,7 @@ static THREAD_RETURN_TYPE handle_connection_thread(void *arg) {
             handle_params_t h_params = {.params = &params,
                                         .env = server->env,
                                         .txn = NULL,              // 默认无外部事务
+                                        .router = server->router, // 传递路由器
                                         .body = request->body,
                                         .body_len = request->body_len,
                                         .txn_timeout = server->config.txn_timeout,
@@ -297,9 +300,32 @@ int http_server_init(http_server_t *server, const server_config_t *config) {
     }
   }
 
+  // 创建路由器并注册所有路由
+  server->router = router_create();
+  if (!server->router) {
+    LOG_ERROR("Failed to create router");
+    if (server->env) {
+      lmjcore_cleanup(server->env);
+      server->env = NULL;
+    }
+    free(server->config.host);
+    return -1;
+  }
+
+  if (register_all_routes(server->router) != 0) {
+    LOG_ERROR("Failed to register routes");
+    router_destroy(server->router);
+    server->router = NULL;
+    if (server->env) {
+      lmjcore_cleanup(server->env);
+      server->env = NULL;
+    }
+    free(server->config.host);
+    return -1;
+  }
+
   server->listen_fd = SOCKET_ERROR_VAL;
   server->running = false;
-  server->router = NULL;
 
 #ifdef _WIN32
   // Windows 需要初始化 Winsock
@@ -460,6 +486,12 @@ void http_server_destroy(http_server_t *server) {
   if (server->config.host) {
     free(server->config.host);
     server->config.host = NULL;
+  }
+
+  // 释放路由器
+  if (server->router) {
+    router_destroy(server->router);
+    server->router = NULL;
   }
 
   // 关闭 LMDB 环境

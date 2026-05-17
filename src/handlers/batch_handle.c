@@ -20,15 +20,6 @@ typedef struct {
   size_t body_len;
 } batch_result_t;
 
-// ==================== 事务超时检查宏 ====================
-
-#define CHECK_TXN_TIMEOUT(hp, response)                                      \
-  do {                                                                       \
-    if (lmjcore_txn_check_timeout((hp)->txn_start_time, (hp)->txn_timeout)) {\
-      RETURN_ERROR_TXN_TIMEOUT(response);                                    \
-    }                                                                        \
-  } while (0)
-
 // ==================== 内部调用包装器 ====================
 
 /**
@@ -359,8 +350,10 @@ int handle_batch_operations(void *params, void *cbdata) {
   cJSON_ArrayForEach(item, operations) {
     if (index >= op_count) break;
 
-    // 检查事务超时
-    CHECK_TXN_TIMEOUT(hp, response);
+    // 检查事务超时（txn 为 NULL，因为批量操作使用共享事务）
+    if (lmjcore_txn_check_timeout(hp->txn_start_time, hp->txn_timeout)) {
+      RETURN_ERROR_TXN_TIMEOUT(response);
+    }
 
     if (!cJSON_IsObject(item)) {
       results[index].status_code = HTTP_STATUS_BAD_REQUEST;

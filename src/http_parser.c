@@ -134,10 +134,19 @@ static int on_header_value(llhttp_t *parser, const char *at, size_t length) {
 
   if (strcasecmp(ctx->header_key, "Content-Type") == 0) {
     ctx->local_request->content_type = strdup(ctx->current_header_value);
+    if (!ctx->local_request->content_type) {
+      return HPE_USER;
+    }
   } else if (strcasecmp(ctx->header_key, "Content-Length") == 0) {
     ctx->local_request->content_length = strdup(ctx->current_header_value);
+    if (!ctx->local_request->content_length) {
+      return HPE_USER;
+    }
   } else if (strcasecmp(ctx->header_key, "Host") == 0) {
     ctx->local_request->host = strdup(ctx->current_header_value);
+    if (!ctx->local_request->host) {
+      return HPE_USER;
+    }
   }
 
   return HPE_OK;
@@ -147,6 +156,9 @@ static int on_message_complete(llhttp_t *parser) {
   http_parser_context_t *ctx = (http_parser_context_t *)parser->data;
 
   ctx->local_request->url = strdup(ctx->url_buf);
+  if (!ctx->local_request->url) {
+    return HPE_USER;
+  }
 
   return HPE_OK;
 }
@@ -240,9 +252,16 @@ http_request_t *http_parser_get_request(http_parser_context_t *ctx) {
   if (!pub_req) return NULL;
 
   pub_req->method = (int)local_req->method;
+  
   pub_req->url = local_req->url ? strdup(local_req->url) : NULL;
+  if (!pub_req->url) {
+    free(pub_req);
+    return NULL;
+  }
+  
   pub_req->body = local_req->body ? strdup(local_req->body) : NULL;
   pub_req->body_len = local_req->body_len;
+  
   pub_req->content_type =
       local_req->content_type ? strdup(local_req->content_type) : NULL;
   pub_req->content_length =
@@ -264,13 +283,16 @@ void http_parser_reset(http_parser_context_t *ctx) {
   ctx->current_header_value_len = 0;
   ctx->parsing_header = 0;
 
+  // 注意：只清零指针，不释放内存
+  // 实际释放由 http_parser_destroy 完成，避免双重释放
   if (ctx->local_request) {
-    free(ctx->local_request->url);
-    free(ctx->local_request->body);
-    free(ctx->local_request->content_type);
-    free(ctx->local_request->content_length);
-    free(ctx->local_request->host);
-    memset(ctx->local_request, 0, sizeof(local_http_request_t));
+    ctx->local_request->url = NULL;
+    ctx->local_request->body = NULL;
+    ctx->local_request->content_type = NULL;
+    ctx->local_request->content_length = NULL;
+    ctx->local_request->host = NULL;
+    ctx->local_request->method = 0;
+    ctx->local_request->body_len = 0;
   }
 }
 

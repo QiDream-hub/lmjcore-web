@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 project(lmjcore_server VERSION 1.0.0 LANGUAGES C)
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON) 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # -----------------------------------------------------------
 # 1. 全局配置
@@ -11,31 +11,84 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 # 编译选项
 if(CMAKE_C_COMPILER_ID STREQUAL "GNU" OR CMAKE_C_COMPILER_ID STREQUAL "Clang")
     # 添加 -g 以便调试，-O2 用于优化
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -O2 -g")
+    # 添加更严格的警告选项
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wpedantic -O2 -g")
+    
+    # 额外的警告选项（可选）
+    # -Wconversion: 警告隐式类型转换
+    # -Wshadow: 警告变量遮蔽
+    # set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wconversion -Wshadow")
 endif()
 
 # -----------------------------------------------------------
-# 2. 查找依赖 (LMDB)
+# 2. 查找依赖 (LMDB, llhttp)
 # -----------------------------------------------------------
 
-# 1. 查找头文件 (必须是 lmdb.h)
-find_path(LMDB_INCLUDE_DIR
-    NAMES lmdb.h
-    PATHS /usr/include /usr/local/include
-)
+# 使用 pkg-config 查找 LMDB（如果可用）
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(LMDB QUIET lmdb)
+endif()
 
-# 2. 查找库文件 (名字是 lmdb)
-find_library(LMDB_LIBRARY
-    NAMES lmdb
-    PATHS /usr/lib /usr/local/lib
-)
+if(NOT LMDB_FOUND)
+    # 回退到传统查找方式
+    find_path(LMDB_INCLUDE_DIR
+        NAMES lmdb.h
+        PATHS /usr/include /usr/local/include /opt/local/include
+    )
 
-# 3. 检查结果
-if(NOT LMDB_INCLUDE_DIR OR NOT LMDB_LIBRARY)
+    find_library(LMDB_LIBRARY
+        NAMES lmdb
+        PATHS /usr/lib /usr/local/lib /opt/local/lib
+    )
+    
+    if(LMDB_INCLUDE_DIR)
+        set(LMDB_INCLUDE_DIRS ${LMDB_INCLUDE_DIR})
+    endif()
+    if(LMDB_LIBRARY)
+        set(LMDB_LIBRARIES ${LMDB_LIBRARY})
+    endif()
+endif()
+
+# 检查结果
+if(NOT LMDB_INCLUDE_DIRS OR NOT LMDB_LIBRARIES)
     message(FATAL_ERROR "LMDB not found. Please install lmdb development package.")
 else()
-    message(STATUS "Found LMDB Include: ${LMDB_INCLUDE_DIR}")
-    message(STATUS "Found LMDB Library: ${LMDB_LIBRARY}")
+    message(STATUS "Found LMDB Include: ${LMDB_INCLUDE_DIRS}")
+    message(STATUS "Found LMDB Library: ${LMDB_LIBRARIES}")
+endif()
+
+# 使用 pkg-config 查找 llhttp（如果可用）
+if(PkgConfig_FOUND)
+    pkg_check_modules(LLHTTP QUIET llhttp)
+endif()
+
+if(NOT LLHTTP_FOUND)
+    # 回退到传统查找方式
+    find_path(LLHTTP_INCLUDE_DIR
+        NAMES llhttp.h
+        PATHS /usr/include /usr/local/include /opt/local/include
+    )
+
+    find_library(LLHTTP_LIBRARY
+        NAMES llhttp
+        PATHS /usr/lib /usr/local/lib /opt/local/lib
+    )
+    
+    if(LLHTTP_INCLUDE_DIR)
+        set(LLHTTP_INCLUDE_DIRS ${LLHTTP_INCLUDE_DIR})
+    endif()
+    if(LLHTTP_LIBRARY)
+        set(LLHTTP_LIBRARIES ${LLHTTP_LIBRARY})
+    endif()
+endif()
+
+# 检查结果
+if(NOT LLHTTP_INCLUDE_DIRS OR NOT LLHTTP_LIBRARIES)
+    message(FATAL_ERROR "llhttp not found. Please install llhttp development package.")
+else()
+    message(STATUS "Found llhttp Include: ${LLHTTP_INCLUDE_DIRS}")
+    message(STATUS "Found llhttp Library: ${LLHTTP_LIBRARIES}")
 endif()
 
 # -----------------------------------------------------------
@@ -103,39 +156,21 @@ set(ALL_SOURCES
 )
 
 # -----------------------------------------------------------
-# 5. 构建可执行文件
-# -----------------------------------------------------------
-add_executable(lmjcore_server ${ALL_SOURCES})
-
-# -----------------------------------------------------------
-# 2.5 添加 cJSON 子模块 (JSON 解析库)
+# 5. 添加子模块（在 add_executable 之前）
 # -----------------------------------------------------------
 add_subdirectory(${THIRDPARTY_DIR}/cJSON)
 
-# 查找系统 llhttp 库
-find_path(LLHTTP_INCLUDE_DIR
-    NAMES llhttp.h
-    PATHS /usr/include /usr/local/include
-)
-
-find_library(LLHTTP_LIBRARY
-    NAMES llhttp
-    PATHS /usr/lib /usr/local/lib
-)
-
-if(NOT LLHTTP_INCLUDE_DIR OR NOT LLHTTP_LIBRARY)
-    message(FATAL_ERROR "llhttp not found. Please install llhttp development package.")
-else()
-    message(STATUS "Found llhttp Include: ${LLHTTP_INCLUDE_DIR}")
-    message(STATUS "Found llhttp Library: ${LLHTTP_LIBRARY}")
-endif()
+# -----------------------------------------------------------
+# 6. 构建可执行文件
+# -----------------------------------------------------------
+add_executable(lmjcore_server ${ALL_SOURCES})
 
 # 添加头文件搜索路径
 target_include_directories(lmjcore_server PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src/handlers
-    ${LMDB_INCLUDE_DIR}
-    ${LLHTTP_INCLUDE_DIR}
+    ${LMDB_INCLUDE_DIRS}
+    ${LLHTTP_INCLUDE_DIRS}
     ${THIRDPARTY_DIR}/LMJCore/core/include
     ${THIRDPARTY_DIR}/LMJCore/Toolkit/ptr_uuid_gen/include
     ${THIRDPARTY_DIR}/URLRouter/include
@@ -143,22 +178,26 @@ target_include_directories(lmjcore_server PRIVATE
 )
 
 # -----------------------------------------------------------
-# 6. 链接库 (重点修改这里)
+# 7. 链接库
 # -----------------------------------------------------------
 target_link_libraries(lmjcore_server
     # 1. 先链接第三方库 (LMDB)
-    # 注意：确保 ${LMDB_LIBRARY} 解析出来的是 /usr/lib/liblmdb.so
-    ${LMDB_LIBRARY}
+    ${LMDB_LIBRARIES}
 
     # 2. llhttp HTTP 解析库（系统库）
-    ${LLHTTP_LIBRARY}
+    ${LLHTTP_LIBRARIES}
 
     # 3. cJSON JSON 解析库（子模块，库名为小写 cjson）
     cjson
 
     # 4. 再链接系统库
-    # pthread, rt, m 等系统库通常放在后面
     pthread
     rt
     m
 )
+
+# -----------------------------------------------------------
+# 8. 安装规则
+# -----------------------------------------------------------
+install(TARGETS lmjcore_server DESTINATION bin)
+install(FILES lmjcore.conf DESTINATION etc OPTIONAL)

@@ -13,23 +13,25 @@
 const char *route_params_get(route_params_t *params, size_t index) {
   // 使用线程局部存储的多个缓冲区，支持最多 4 个参数同时使用
   static __thread char param_bufs[4][1024];
-  static __thread int current_buf = 0;
+  static __thread int current_buf = 0;  // 显式初始化为 0
 
   if (!params || index >= params->count) {
     return NULL;
   }
 
   route_param_t param = params->params[index];
-  if (param.len >= sizeof(param_bufs[0]) - 1) {
-    return NULL; // 参数太长
+  // 限制拷贝长度，防止缓冲区溢出
+  size_t copy_len = param.len;
+  if (copy_len >= sizeof(param_bufs[0]) - 1) {
+    copy_len = sizeof(param_bufs[0]) - 1;
   }
 
   // 循环使用 4 个缓冲区
   int buf_index = current_buf % 4;
   current_buf++;
 
-  memcpy(param_bufs[buf_index], param.ptr, param.len);
-  param_bufs[buf_index][param.len] = '\0';
+  memcpy(param_bufs[buf_index], param.ptr, copy_len);
+  param_bufs[buf_index][copy_len] = '\0';
 
   return param_bufs[buf_index];
 }
@@ -155,7 +157,8 @@ int lmjcore_encode_value(const char *value_str, size_t value_len,
   }
 
   // 默认为原始数据
-  if (out_buf_size < 1 + value_len) {
+  // 检查整数溢出：value_len 不能太大
+  if (value_len > out_buf_size - 1) {
     return LMJCORE_ERROR_BUFFER_TOO_SMALL;
   }
 
@@ -181,6 +184,9 @@ int lmjcore_decode_value(const uint8_t *data, size_t data_len, char **out_str,
   switch (type_flag) {
   case LMJCORE_VALUE_TYPE_NULL:
     *out_str = strdup("null");
+    if (!*out_str) {
+      return LMJCORE_ERROR_MEMORY_ALLOCATION_FAILED;
+    }
     *out_type = VALUE_TYPE_NULL;
     return LMJCORE_SUCCESS;
 
@@ -197,8 +203,14 @@ int lmjcore_decode_value(const uint8_t *data, size_t data_len, char **out_str,
     *out_type = VALUE_TYPE_REF;
     return LMJCORE_SUCCESS;
 
-  case LMJCORE_VALUE_TYPE_RAW:
-    *out_str = (char *)malloc(data_len);
+  case LMJCORE_VALUE_TYPE_RAW: {
+    // 检查整数溢出：data_len 必须至少为 2（1 字节类型标记 + 至少 1 字节数据）
+    if (data_len < 2) {
+      return LMJCORE_ERROR_INVALID_PARAM;
+    }
+    // 防止溢出：检查 data_len - 1 是否合理
+    size_t alloc_size = data_len;  // 多分配 1 字节给 '\0'
+    *out_str = (char *)malloc(alloc_size);
     if (!*out_str) {
       return LMJCORE_ERROR_MEMORY_ALLOCATION_FAILED;
     }
@@ -206,6 +218,7 @@ int lmjcore_decode_value(const uint8_t *data, size_t data_len, char **out_str,
     (*out_str)[data_len - 1] = '\0';
     *out_type = VALUE_TYPE_RAW;
     return LMJCORE_SUCCESS;
+  }
 
   default:
     return LMJCORE_ERROR_INVALID_PARAM;
@@ -425,4 +438,91 @@ int url_decode(const char *src, size_t src_len, char *out_buf,
 
   out_buf[j] = '\0';
   return (int)j;
+}
+
+// ==================== JSON 响应构建工具 ====================
+
+int build_entity_json_response(const char *ptr_str,
+                               const char **items,
+                               const char **types,
+                               size_t count,
+                               const char *item_label,
+                               char **out_json,
+                               size_t *out_len) {
+  if (!ptr_str || !items || !types || !out_json || !out_len) {
+    return LMJCORE_ERROR_NULL_POINTER;
+  }
+
+  // 初始缓冲区大小
+  size_t json_size = 4096;
+  char *json_buf = (char *)malloc(json_size);
+  if (!json_buf) {
+    return LMJCORE_ERROR_MEMORY_ALLOCATION_FAILED;
+  }
+
+  int offset = snprintf(json_buf, json_size,
+                        "{\"ptr\":\"%s\",\"elements\":[", ptr_str);
+  if (offset < 0 || (size_t)offset >= json_size) {
+    free(json_buf);
+    return LMJCORE_ERROR_MEMORY_ALLOCATION_FAILED;
+  }
+
+  // 遍历元素
+  for (size_t i = 0; i < count; i++) {
+    if (!items[i] || !types[i]) {
+      continue;
+    }
+
+    // 计算所需空间
+    size_t needed = strlen(items[i]) + strlen(types[i]) + 64;
+
+    // 检查缓冲区是否需要扩展
+    while ((size_t)offset + needed >= json_size) {
+      json_size *= 2;
+      char *new_buf = (char *)realloc(json_buf, json_size);
+      if (!new_buf) {
+        free(json_buf);
+        return LMJCORE_ERROR_MEMORY_ALLOCATION_FAILED;
+      }
+      json_buf = new_buf;
+    }
+
+    int written = snprintf(json_buf + offset, json_size - offset,
+                           "%s{\"%s\":\"%s\",\"type\":\"%s\"}",
+                           i > 0 ? "," : "", item_label, items[i], types[i]);
+
+    if (written < 0 || (size_t)written >= json_size - offset) {
+      // 缓冲区仍然不够，继续扩展
+      json_size *= 2;
+      char *new_buf = (char *)realloc(json_buf, json_size);
+      if (!new_buf) {
+        free(json_buf);
+        return LMJCORE_ERROR_MEMORY_ALLOCATION_FAILED;
+      }
+      json_buf = new_buf;
+      written = snprintf(json_buf + offset, json_size - offset,
+                         "%s{\"%s\":\"%s\",\"type\":\"%s\"}",
+                         i > 0 ? "," : "", item_label, items[i], types[i]);
+    }
+    offset += written;
+  }
+
+  // 确保结尾有足够空间
+  while ((size_t)offset + 32 >= json_size) {
+    json_size *= 2;
+    char *new_buf = (char *)realloc(json_buf, json_size);
+    if (!new_buf) {
+      free(json_buf);
+      return LMJCORE_ERROR_MEMORY_ALLOCATION_FAILED;
+    }
+    json_buf = new_buf;
+  }
+
+  offset += snprintf(json_buf + offset, json_size - offset, "],\"count\":%zu}",
+                     count);
+
+  *out_json = json_buf;
+  *out_len = (size_t)offset;
+
+  return LMJCORE_SUCCESS;
 }

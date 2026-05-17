@@ -25,7 +25,56 @@ typedef enum {
   VALUE_TYPE_OBJECT = 4
 } api_value_type_t;
 
-// 处理器参数
+// ==================== 事务管理宏（统一在此定义） ====================
+
+/**
+ * @brief 自动或手动管理事务
+ * 如果 hp->txn 已设置，则使用外部事务（不自动提交/回滚）
+ * 否则创建新事务并自动管理
+ */
+#define TXN_BEGIN(txn, hp, flags, response, cleanup_label)                    \
+  do {                                                                        \
+    if ((hp)->txn) {                                                          \
+      txn = (hp)->txn;                                                        \
+    } else {                                                                  \
+      int rc = lmjcore_txn_begin((hp)->env, NULL, flags, &txn);               \
+      if (rc != LMJCORE_SUCCESS || !txn) {                                    \
+        RETURN_ERROR_TXN_FAILED("begin", response);                           \
+      }                                                                       \
+    }                                                                         \
+  } while (0)
+
+#define TXN_COMMIT(txn, hp, response, cleanup_label)                          \
+  do {                                                                        \
+    if (!(hp)->txn) {                                                         \
+      int rc = lmjcore_txn_commit(txn);                                       \
+      if (rc != LMJCORE_SUCCESS) {                                            \
+        lmjcore_txn_abort(txn);                                               \
+        goto cleanup_label;                                                   \
+      }                                                                       \
+    }                                                                         \
+  } while (0)
+
+#define TXN_ABORT(txn, hp)                                                    \
+  do {                                                                        \
+    if (!(hp)->txn) {                                                         \
+      lmjcore_txn_abort(txn);                                                 \
+    }                                                                         \
+  } while (0)
+
+/**
+ * @brief 检查事务超时
+ */
+#define CHECK_TXN_TIMEOUT(hp, response, txn)                                 \
+  do {                                                                       \
+    if (lmjcore_txn_check_timeout((hp)->txn_start_time, (hp)->txn_timeout)) {\
+      if (txn) lmjcore_txn_abort(txn);                                       \
+      RETURN_ERROR_TXN_TIMEOUT(response);                                    \
+    }                                                                        \
+  } while (0)
+
+// ==================== 处理器参数 ====================
+
 typedef struct {
   route_params_t *params;
   lmjcore_env *env;
@@ -159,5 +208,25 @@ int handle_txn_begin(handle_params_t *hp, lmjcore_txn **txn_out, int flags);
  * @return LMJCORE_SUCCESS 成功，否则失败
  */
 int handle_txn_end(handle_params_t *hp, lmjcore_txn *txn, int success);
+
+/**
+ * @brief 构建对象/集合的 JSON 响应（通用函数）
+ *
+ * @param ptr_str 指针字符串
+ * @param items 项目数组（成员名或元素值）
+ * @param types 类型数组
+ * @param count 项目数量
+ * @param item_label 项目标签（"name" 或 "value"）
+ * @param out_json 输出 JSON 字符串（需调用方释放）
+ * @param out_len 输出长度
+ * @return int 错误码
+ */
+int build_entity_json_response(const char *ptr_str,
+                               const char **items,
+                               const char **types,
+                               size_t count,
+                               const char *item_label,
+                               char **out_json,
+                               size_t *out_len);
 
 #endif // HANDLE_UTILS_H

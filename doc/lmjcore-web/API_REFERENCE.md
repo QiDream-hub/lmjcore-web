@@ -37,14 +37,57 @@
 | 对象操作 | 7 | 对象的 CRUD 和链式查询 |
 | 集合操作 | 5 | 集合的 CRUD |
 | 工具接口 | 2 | 健康检查和指针验证 |
-| 批量操作 | 1 | 事务内批量执行多个操作 |
-| **总计** | **15** | |
+| 批量操作 | 2 | GET /batch（只读）、POST /batch（写事务） |
+| **总计** | **16** | |
 
 ---
 
 ## 批量操作 API
 
-### 15. 批量执行操作
+批量操作 API 通过 HTTP 方法区分事务类型：
+
+| 方法 | 端点 | 事务类型 | 允许的操作 |
+|------|------|----------|------------|
+| `GET` | `/batch` | 只读事务 | 仅 `GET` |
+| `POST` | `/batch` | 写事务 | `GET`/`PUT`/`POST`/`DELETE` |
+
+### 15. GET /batch - 只读批量操作
+
+**请求**
+```http
+GET /batch
+Content-Type: application/json
+
+{
+  "operations": [
+    {
+      "method": "GET",
+      "path": "/obj/01abc123..."
+    },
+    {
+      "method": "GET",
+      "path": "/obj/01abc123.../name"
+    },
+    {
+      "method": "GET",
+      "path": "/set/02def456..."
+    }
+  ]
+}
+```
+
+**请求体字段**
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `operations` | array | 操作列表，最大 1000 个操作，仅允许 `GET` 操作 |
+
+**说明**
+- 使用只读事务（`LMJCORE_TXN_READONLY`），保证读取一致性
+- 如操作中包含 `PUT`/`POST`/`DELETE`，返回 400 错误
+
+---
+
+### 16. POST /batch - 写操作批量操作
 
 **请求**
 ```http
@@ -52,7 +95,6 @@ POST /batch
 Content-Type: application/json
 
 {
-  "readonly": false,
   "operations": [
     {
       "method": "PUT",
@@ -74,7 +116,6 @@ Content-Type: application/json
 **请求体字段**
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `readonly` | boolean | 可选，默认 `false`。`true` 表示只读事务 |
 | `operations` | array | 操作列表，最大 1000 个操作 |
 
 **操作结构**
@@ -84,7 +125,7 @@ Content-Type: application/json
 | `path` | string | 完整路径，如 `/obj/{ptr}`、`/obj/{ptr}/{member}`、`/set/{ptr}` |
 | `body` | object | 可选，仅 `PUT`/`POST` 需要，格式 `{"value": "..."}` |
 
-**成功响应**
+**成功响应（GET /batch 和 POST /batch 相同）**
 ```http
 HTTP/1.1 200 OK
 Content-Type: application/json
@@ -134,8 +175,8 @@ Content-Type: application/json
 
 **说明**
 - **原子性**: 所有操作在同一事务内执行，任一操作失败则全部回滚
-- **写事务**: 默认模式，支持所有操作类型，限制总时长（默认 5 秒超时）
-- **只读事务**: 设置 `readonly: true` 时，如果操作中包含写操作（PUT/POST/DELETE）则返回错误
+- **GET /batch**: 使用只读事务（`LMJCORE_TXN_READONLY`），仅允许 `GET` 操作
+- **POST /batch**: 使用写事务，支持所有操作类型，限制总时长（默认 5 秒超时）
 - **操作限制**: 最多支持 1000 个并发操作
 - **错误处理**: 失败时返回 `failed_at` 字段指示失败位置，便于调试
 
@@ -185,10 +226,9 @@ curl -X POST http://localhost:8080/batch \
   }'
 ```
 
-示例 3：只读事务批量查询
+示例 3：只读事务批量查询（使用 GET /batch）
 ```json
 {
-  "readonly": true,
   "operations": [
     {"method": "GET", "path": "/obj/01abc123..."},
     {"method": "GET", "path": "/obj/01abc123.../name"},
@@ -197,10 +237,23 @@ curl -X POST http://localhost:8080/batch \
 }
 ```
 
+```bash
+curl -X GET http://localhost:8080/batch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operations": [
+      {"method": "GET", "path": "/obj/01abc123..."},
+      {"method": "GET", "path": "/obj/01abc123.../name"},
+      {"method": "GET", "path": "/set/02def456..."}
+    ]
+  }'
+```
+
 **注意事项**
 - 批量操作**不支持别名引用**：每个操作的 `path` 必须使用完整的指针字符串
 - 如需在批量操作中引用新创建的对象指针，需分两步：先创建获取指针，再批量操作
 - 失败时事务自动回滚，已执行的操作不会生效
+- `GET /batch` 仅允许 `GET` 操作，`POST /batch` 允许所有操作类型
 
 ---
 
@@ -924,12 +977,22 @@ const queryPath = async (path) => {
   return await response.json();
 };
 
-// 批量操作
-const batchOperations = async (operations, readonly = false) => {
+// 批量操作（只读）
+const batchGet = async (operations) => {
+  const response = await fetch('http://localhost:8080/batch', {
+    method: 'GET',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ operations })
+  });
+  return await response.json();
+};
+
+// 批量操作（写事务）
+const batchPost = async (operations) => {
   const response = await fetch('http://localhost:8080/batch', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ readonly, operations })
+    body: JSON.stringify({ operations })
   });
   return await response.json();
 };
@@ -944,12 +1007,19 @@ const batchOperations = async (operations, readonly = false) => {
   const result = await queryPath(`${ptr}.name`);
   console.log('Query result:', result);
 
-  // 批量操作示例
-  const batchResult = await batchOperations([
+  // 批量操作示例（写事务）
+  const batchResult = await batchPost([
     { method: 'PUT', path: `/obj/${ptr}/age`, body: { value: '25' } },
     { method: 'GET', path: `/obj/${ptr}` }
   ]);
   console.log('Batch result:', batchResult);
+
+  // 只读批量查询示例
+  const readonlyResult = await batchGet([
+    { method: 'GET', path: `/obj/${ptr}` },
+    { method: 'GET', path: `/obj/${ptr}/name` }
+  ]);
+  console.log('Readonly batch result:', readonlyResult);
 })();
 ```
 
@@ -961,3 +1031,4 @@ const batchOperations = async (operations, readonly = false) => {
 |------|------|------|
 | 1.0.0 | 2024-01-01 | 初始版本 |
 | 1.1.0 | 2026-05-17 | 添加批量操作 API (`POST /batch`) |
+| 1.2.0 | 2026-05-20 | 拆分批量操作 API：`GET /batch`（只读）、`POST /batch`（写事务） |

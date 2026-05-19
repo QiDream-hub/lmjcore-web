@@ -151,10 +151,10 @@ curl http://localhost:8080/obj/{ptr}
 
 批量操作 API 使用 HTTP 方法区分事务类型：
 
-| 方法 | 端点 | 说明 |
-|------|------|------|
-| `GET` | `/batch` | 只读批量操作（仅允许 GET） |
-| `POST` | `/batch` | 写操作批量操作（允许所有操作） |
+| 方法 | 端点 | 事务类型 | 允许的操作 |
+|------|------|----------|------------|
+| `GET` | `/batch` | 只读事务 | 仅 `GET` |
+| `POST` | `/batch` | 写事务 | `GET`/`PUT`/`POST`/`DELETE` |
 
 **请求格式**:
 ```json
@@ -169,8 +169,9 @@ curl http://localhost:8080/obj/{ptr}
 
 **特性**:
 - **原子性**: 所有操作在同一事务内执行，要么全部成功，要么全部回滚
-- **GET /batch**: 使用只读事务，仅允许 GET 操作，如包含 PUT/POST/DELETE 则返回错误
-- **POST /batch**: 使用写事务，支持所有操作类型（GET/PUT/POST/DELETE），限制总时长（默认 5 秒超时）
+- **GET /batch**: 使用只读事务（`LMJCORE_TXN_READONLY`），仅允许 `GET` 操作，如包含 `PUT`/`POST`/`DELETE` 则返回 400 错误
+- **POST /batch**: 使用写事务，支持所有操作类型，限制总时长（默认 5 秒超时）
+- **响应格式**: 成功时返回 `{"success": true, "results": [...]}`，失败时返回 `{"success": false, "failed_at": N, "details: {...}}`
 
 **重要说明**:
 - **不支持别名（alias）功能**：每个操作必须指定完整的指针路径

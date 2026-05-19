@@ -11,8 +11,16 @@ int register_all_routes(router_t *router) {
 
   // ==================== 批量操作 ====================
 
+  // GET /batch - 只读批量操作
+  if (router_register(router, HTTP_GET, "/$'batch'",
+                      handle_batch_get, NULL) != 0) {
+    LOG_ERROR("Failed to register GET /batch");
+    return -1;
+  }
+
+  // POST /batch - 写操作批量操作
   if (router_register(router, HTTP_POST, "/$'batch'",
-                      handle_batch_operations, NULL) != 0) {
+                      handle_batch_post, NULL) != 0) {
     LOG_ERROR("Failed to register POST /batch");
     return -1;
   }
@@ -108,7 +116,8 @@ int register_all_routes(router_t *router) {
   }
 
   LOG_INFO("Routes registered successfully:");
-  LOG_INFO("  POST   /batch");
+  LOG_INFO("  GET    /batch (readonly)");
+  LOG_INFO("  POST   /batch (read-write)");
   LOG_INFO("  POST   /obj");
   LOG_INFO("  GET    /obj/{ptr}");
   LOG_INFO("  GET    /obj/{ptr}/{member}");

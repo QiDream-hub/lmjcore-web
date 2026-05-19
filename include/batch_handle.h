@@ -6,12 +6,21 @@
 #include "router.h"
 
 /**
- * @brief POST /batch - 批量执行多个操作（同一事务内）
- * 
- * 支持在同一个事务内执行多个操作，保证原子性。
- * - 写事务：不限制操作类型，但限制总时长（超时报错）
- * - 只读事务：检查操作中是否包含写操作，包含则报错
+ * @brief GET /batch - 只读批量执行多个操作（同一只读事务内）
+ *
+ * 支持在同一个只读事务内执行多个只读操作，保证一致性。
+ * - 仅允许 GET 操作
+ * - 如包含 PUT/POST/DELETE 则返回错误
  */
-int handle_batch_operations(void *params, void *cbdata);
+int handle_batch_get(void *params, void *cbdata);
+
+/**
+ * @brief POST /batch - 写操作批量执行多个操作（同一写事务内）
+ *
+ * 支持在同一个写事务内执行多个操作，保证原子性。
+ * - 允许所有操作类型（GET/PUT/POST/DELETE）
+ * - 限制总时长（超时报错）
+ */
+int handle_batch_post(void *params, void *cbdata);
 
 #endif // BATCH_HANDLE_H

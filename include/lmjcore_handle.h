@@ -10,8 +10,12 @@
 /**
  * @brief POST /batch - 批量执行多个操作（同一事务内）
  */
-int handle_batch_operations(void *params, void *cbdata);
+int handle_batch_post(void *params, void *cbdata);
 
+/**
+ * @brief GET /batch - 批量执行多个操作（同一事务内 - 仅读）
+ */
+int handle_batch_get(void *params, void *cbdata);
 // ==================== 对象处理器 ====================
 // 实现文件：src/handlers/obj_handle.c
 

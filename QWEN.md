@@ -149,27 +149,28 @@ curl http://localhost:8080/obj/{ptr}
 
 ## 批量操作
 
+批量操作 API 使用 HTTP 方法区分事务类型：
+
 | 方法 | 端点 | 说明 |
 |------|------|------|
-| `POST` | `/batch` | 在同一个事务内批量执行多个操作 |
+| `GET` | `/batch` | 只读批量操作（仅允许 GET） |
+| `POST` | `/batch` | 写操作批量操作（允许所有操作） |
 
 **请求格式**:
 ```json
 {
-  "readonly": false,
   "operations": [
-    {"method": "POST", "path": "/obj"},
     {"method": "GET", "path": "/obj/01abc..."},
-    {"method": "PUT", "path": "/obj/01abc.../name", "body": {"value": "hello"}},
-    {"method": "DELETE", "path": "/obj/01abc.../age"}
+    {"method": "GET", "path": "/obj/01abc.../name"},
+    {"method": "GET", "path": "/set/02def..."}
   ]
 }
 ```
 
 **特性**:
 - **原子性**: 所有操作在同一事务内执行，要么全部成功，要么全部回滚
-- **写事务**: 默认模式，支持所有操作，限制总时长（默认 5 秒超时）
-- **只读事务**: `readonly: true` 时，不允许写操作（PUT/POST/DELETE）
+- **GET /batch**: 使用只读事务，仅允许 GET 操作，如包含 PUT/POST/DELETE 则返回错误
+- **POST /batch**: 使用写事务，支持所有操作类型（GET/PUT/POST/DELETE），限制总时长（默认 5 秒超时）
 
 **重要说明**:
 - **不支持别名（alias）功能**：每个操作必须指定完整的指针路径
@@ -186,12 +187,35 @@ curl http://localhost:8080/obj/{ptr}
 
 **示例**:
 ```bash
-# 创建对象并设置属性（两步）
+# 只读批量查询
+curl -X GET http://localhost:8080/batch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operations": [
+      {"method": "GET", "path": "/obj/01abc..."},
+      {"method": "GET", "path": "/obj/01abc.../name"},
+      {"method": "GET", "path": "/set/02def..."}
+    ]
+  }'
+
+# 写操作批量设置属性
+curl -X POST http://localhost:8080/batch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operations": [
+      {"method": "PUT", "path": "/obj/01abc.../name", "body": {"value": "Alice"}},
+      {"method": "PUT", "path": "/obj/01abc.../age", "body": {"value": "30"}}
+    ]
+  }'
+```
+
+**示例 - 创建对象并设置属性（两步）**:
+```bash
 # 第一步：创建对象
 curl -X POST http://localhost:8080/obj
 # 返回：{"ptr":"01abc..."}
 
-# 第二步：批量设置属性
+# 第二步：批量设置属性（使用 POST /batch）
 curl -X POST http://localhost:8080/batch \
   -H "Content-Type: application/json" \
   -d '{

@@ -173,35 +173,21 @@ static int execute_operation(handle_params_t *hp, const cJSON *op_obj,
   return 0;
 }
 
-// ==================== 主处理器 ====================
+// ==================== 内部核心处理器 ====================
 
-int handle_batch_operations(void *params, void *cbdata) {
-  handle_params_t *hp = (handle_params_t *)params;
-  http_response_t *response = (http_response_t *)cbdata;
-
-  if (!hp || !hp->env || !hp->body) {
-    RETURN_ERROR_INVALID_PARAM(response);
-  }
-
-  // 解析请求体
-  cJSON *root = cJSON_ParseWithOpts(hp->body, NULL, 0);
-  if (!root) {
-    build_error_response(HTTP_STATUS_BAD_REQUEST,
-                         "Invalid JSON in request body", response);
-    return -1;
-  }
-
-  if (!cJSON_IsObject(root)) {
-    cJSON_Delete(root);
-    build_error_response(HTTP_STATUS_BAD_REQUEST,
-                         "Request body must be a JSON object", response);
-    return -1;
-  }
-
+/**
+ * @brief 批量操作核心处理器（内部使用）
+ * @param hp 处理参数
+ * @param root 请求体 JSON 对象
+ * @param readonly 是否只读事务
+ * @param response 响应结构
+ * @return 0=成功，-1=失败
+ */
+static int handle_batch_core(handle_params_t *hp, cJSON *root, int readonly,
+                             http_response_t *response) {
   // 获取 operations 数组
   cJSON *operations = cJSON_GetObjectItemCaseSensitive(root, "operations");
   if (!operations || !cJSON_IsArray(operations)) {
-    cJSON_Delete(root);
     build_error_response(HTTP_STATUS_BAD_REQUEST,
                          "Missing or invalid 'operations' array", response);
     return -1;
@@ -209,27 +195,18 @@ int handle_batch_operations(void *params, void *cbdata) {
 
   int op_count = cJSON_GetArraySize(operations);
   if (op_count <= 0) {
-    cJSON_Delete(root);
     build_error_response(HTTP_STATUS_BAD_REQUEST,
                          "Operations array is empty", response);
     return -1;
   }
 
   if (op_count > MAX_OPERATIONS) {
-    cJSON_Delete(root);
     build_error_response(HTTP_STATUS_BAD_REQUEST,
                          "Too many operations (max 1000)", response);
     return -1;
   }
 
-  // 检查 readonly 标志
-  int readonly = 0;
-  cJSON *readonly_item = cJSON_GetObjectItemCaseSensitive(root, "readonly");
-  if (readonly_item && cJSON_IsBool(readonly_item)) {
-    readonly = cJSON_IsTrue(readonly_item);
-  }
-
-  // 只读事务检查
+  // 写事务检查：检查操作中是否包含写操作（只读路由使用）
   if (readonly) {
     cJSON *item = NULL;
     cJSON_ArrayForEach(item, operations) {
@@ -239,7 +216,6 @@ int handle_batch_operations(void *params, void *cbdata) {
         const char *method = method_item->valuestring;
         if (strcmp(method, "PUT") == 0 || strcmp(method, "POST") == 0 ||
             strcmp(method, "DELETE") == 0) {
-          cJSON_Delete(root);
           build_error_response(HTTP_STATUS_BAD_REQUEST,
                                "Readonly transaction cannot contain write operations",
                                response);
@@ -280,6 +256,9 @@ int handle_batch_operations(void *params, void *cbdata) {
 
     // 检查事务超时
     if (lmjcore_txn_check_timeout(hp->txn_start_time, hp->txn_timeout)) {
+      lmjcore_txn_abort(txn);
+      free(results);
+      cJSON_Delete(root);
       RETURN_ERROR_TXN_TIMEOUT(response);
     }
 
@@ -376,4 +355,70 @@ int handle_batch_operations(void *params, void *cbdata) {
   cJSON_Delete(root);
 
   return 0;
+}
+
+// ==================== 公开处理器 ====================
+
+/**
+ * @brief GET /batch - 只读批量操作
+ */
+int handle_batch_get(void *params, void *cbdata) {
+  handle_params_t *hp = (handle_params_t *)params;
+  http_response_t *response = (http_response_t *)cbdata;
+
+  if (!hp || !hp->env || !hp->body) {
+    RETURN_ERROR_INVALID_PARAM(response);
+  }
+
+  // 解析请求体
+  cJSON *root = cJSON_ParseWithOpts(hp->body, NULL, 0);
+  if (!root) {
+    build_error_response(HTTP_STATUS_BAD_REQUEST,
+                         "Invalid JSON in request body", response);
+    return -1;
+  }
+
+  if (!cJSON_IsObject(root)) {
+    cJSON_Delete(root);
+    build_error_response(HTTP_STATUS_BAD_REQUEST,
+                         "Request body must be a JSON object", response);
+    return -1;
+  }
+
+  int ret = handle_batch_core(hp, root, 1, response);
+  if (ret != 0) {
+    return -1;
+  }
+
+  return 0;
+}
+
+/**
+ * @brief POST /batch - 写操作批量操作
+ */
+int handle_batch_post(void *params, void *cbdata) {
+  handle_params_t *hp = (handle_params_t *)params;
+  http_response_t *response = (http_response_t *)cbdata;
+
+  if (!hp || !hp->env || !hp->body) {
+    RETURN_ERROR_INVALID_PARAM(response);
+  }
+
+  // 解析请求体
+  cJSON *root = cJSON_ParseWithOpts(hp->body, NULL, 0);
+  if (!root) {
+    build_error_response(HTTP_STATUS_BAD_REQUEST,
+                         "Invalid JSON in request body", response);
+    return -1;
+  }
+
+  if (!cJSON_IsObject(root)) {
+    cJSON_Delete(root);
+    build_error_response(HTTP_STATUS_BAD_REQUEST,
+                         "Request body must be a JSON object", response);
+    return -1;
+  }
+
+  int ret = handle_batch_core(hp, root, 0, response);
+  return ret;
 }

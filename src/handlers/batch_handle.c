@@ -256,8 +256,14 @@ static int handle_batch_core(handle_params_t *hp, cJSON *root, int readonly,
 
     // 检查事务超时
     if (lmjcore_txn_check_timeout(hp->txn_start_time, hp->txn_timeout)) {
-      lmjcore_txn_abort(txn);
+      // 释放之前成功的操作结果
+      for (int i = 0; i < index; i++) {
+        if (results[i].body) {
+          free(results[i].body);
+        }
+      }
       free(results);
+      lmjcore_txn_abort(txn);
       cJSON_Delete(root);
       RETURN_ERROR_TXN_TIMEOUT(response);
     }
@@ -282,6 +288,13 @@ static int handle_batch_core(handle_params_t *hp, cJSON *root, int readonly,
   if (failed_index >= 0) {
     // 回滚事务
     lmjcore_txn_abort(txn);
+
+    // 释放之前成功的操作结果
+    for (int i = 0; i < failed_index; i++) {
+      if (results[i].body) {
+        free(results[i].body);
+      }
+    }
 
     // 构建错误响应
     cJSON *error = cJSON_CreateObject();

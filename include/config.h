@@ -8,6 +8,7 @@
 
 #define CONFIG_MAX_PATH 512
 #define CONFIG_MAX_HOST 64
+#define CONFIG_MAX_LOG_OUTPUT 128
 #define CONFIG_DEFAULT_PATH "lmjcore.conf"
 
 typedef struct {
@@ -18,8 +19,8 @@ typedef struct {
   size_t map_size;                    // 内存映射大小 (字节)
   int max_connections;                // 最大连接数
   int txn_timeout;                    // 事务超时 (秒)
-  bool daemon;                        // 是否守护进程模式
   int log_level;                      // 日志级别 (0=DEBUG, 1=INFO, 2=WARN, 3=ERROR)
+  char log_output[CONFIG_MAX_LOG_OUTPUT];  // 日志输出目标 (stdout/stderr/文件路径)
 } config_t;
 
 // ==================== 默认配置值 ====================
@@ -30,8 +31,8 @@ typedef struct {
 #define CONFIG_DEFAULT_MAP_SIZE (10 * 1024 * 1024)  // 10MB
 #define CONFIG_DEFAULT_MAX_CONNECTIONS 128
 #define CONFIG_DEFAULT_TXN_TIMEOUT 5
-#define CONFIG_DEFAULT_DAEMON false
 #define CONFIG_DEFAULT_LOG_LEVEL 1  // INFO
+#define CONFIG_DEFAULT_LOG_OUTPUT "stdout"
 
 // ==================== 函数声明 ====================
 

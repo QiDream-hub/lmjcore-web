@@ -19,12 +19,10 @@ int handle_obj_query(void *params, void *cbdata) {
   if (!hp || !hp->env || !hp->params) {
     RETURN_ERROR_INVALID_PARAM(response);
   }
-  dzlog_error("开始处理");
 
   // 获取 path 参数（路由模式：/$'obj'/$'query'/${}）
-  // 参数 0: query (固定)
-  // 参数 1: 路径字符串 (例如：01abc...friend.name)
-  const char *path_str = route_params_get(hp->params, 1);
+  // 参数 0: 路径字符串 (例如：01abc...friend.name)
+  const char *path_str = route_params_get(hp->params, 0);
   if (!path_str) {
     RETURN_ERROR_MISSING_PARAM("path", response);
   }
@@ -41,9 +39,9 @@ int handle_obj_query(void *params, void *cbdata) {
     RETURN_ERROR_INVALID_PARAM(response);
   }
 
-  // 转换起始指针
+  // 转换起始指针（使用解析后的指针部分，不是原始 path_str）
   lmjcore_ptr current_ptr;
-  if (lmjcore_ptr_from_string(path_str, current_ptr) != LMJCORE_SUCCESS) {
+  if (lmjcore_ptr_from_string(start_ptr, current_ptr) != LMJCORE_SUCCESS) {
     lmjcore_free_path_parse_result(start_ptr, segments, segment_count);
     RETURN_ERROR_INVALID_PTR(response);
   }

@@ -8,7 +8,7 @@
 |------|------|
 | **类型** | HTTP 服务器 / API 服务 |
 | **语言** | C (C11 标准) |
-| **核心依赖** | LMDB, LMJCore, URLRouter, llhttp |
+| **核心依赖** | LMDB, LMJCore, URLRouter, llhttp, zlog |
 | **构建系统** | CMake |
 | **目标平台** | Linux, macOS |
 
@@ -19,6 +19,7 @@
 - **链式查询** - 支持嵌套路径解析
 - **自动类型识别** - 智能识别指针/原始数据/空值
 - **高性能** - 基于 LMDB 存储引擎 + llhttp HTTP 解析
+- **zlog 日志** - 基于 zlog 的专业日志系统，支持多级别、多输出目标
 
 ---
 
@@ -30,6 +31,7 @@ lmjcore-web/
 ├── README.md               # 项目说明文档
 ├── QWEN.md                 # 本文件 - 开发上下文
 ├── compile_commands.json   # 编译数据库 (LSP 使用)
+├── lmjcore.conf            # 应用程序配置文件
 ├── doc/                    # 详细设计文档
 │   └── lmjcore-web/
 │       ├── lmjcore_web.md      # 架构设计文档
@@ -43,13 +45,11 @@ lmjcore-web/
 │   ├── http_parser.h       # HTTP 解析器接口
 │   ├── http_server.h       # HTTP 服务器接口
 │   ├── lmjcore_handle.h    # 处理器声明 (聚合头文件)
-│   ├── log.h               # 日志模块
 │   └── routes.h            # 路由注册接口
 ├── src/                    # 源代码
 │   ├── main.c              # 程序入口
 │   ├── routes.c            # 路由注册
 │   ├── config.c            # 配置解析
-│   ├── log.c               # 日志模块
 │   ├── http_server.c       # HTTP 服务器实现
 │   ├── http_parser.c       # HTTP 解析器实现 (基于 llhttp)
 │   └── handlers/           # 处理器模块
@@ -62,7 +62,9 @@ lmjcore-web/
 │   └── api_test.html       # API 测试工具 (浏览器)
 └── thirdparty/             # 第三方子模块
     ├── LMJCore/            # LMJCore 存储引擎
-    └── URLRouter/          # URL 路由库
+    ├── URLRouter/          # URL 路由库
+    ├── cJSON/              # JSON 解析库
+    └── zlog/               # zlog 日志库
 ```
 
 ---
@@ -302,6 +304,32 @@ RETURN_ERROR_TXN_FAILED("begin", response); // 事务错误
 - 100% RFC 7230 兼容
 - 支持分块传输编码
 - 支持 HTTP 管道化
+
+### zlog 日志系统
+
+项目使用 [zlog](https://github.com/HardySimpson/c-zlog) 作为日志库，通过 git 子模块引入。
+
+**配置方式**：日志配置与 `lmjcore.conf` 配置系统集成：
+
+```ini
+# lmjcore.conf
+log_level = 1          # 0=DEBUG, 1=INFO, 2=WARN, 3=ERROR
+log_output = stdout    # stdout, stderr, 或文件路径
+```
+
+**日志宏**：使用 zlog 的 `dzlog_*` 系列宏（默认 category）：
+```c
+dzlog_debug("格式字符串", 参数...);
+dzlog_info("格式字符串", 参数...);
+dzlog_warn("格式字符串", 参数...);
+dzlog_error("格式字符串", 参数...);
+```
+
+**日志格式**：
+```
+时间戳 级别 category [文件：行号] 消息
+示例：2026-05-24 02:18:02 INFO main   [/path/to/file.c:123] 消息内容
+```
 
 ---
 

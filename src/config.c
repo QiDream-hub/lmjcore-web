@@ -74,27 +74,6 @@ static int parse_size(const char *str, size_t *out) {
   return 0;
 }
 
-/**
- * @brief 解析布尔值
- */
-static int parse_bool(const char *str, bool *out) {
-  if (!str || !out) return -1;
-
-  if (strcasecmp(str, "true") == 0 || strcasecmp(str, "yes") == 0 ||
-      strcasecmp(str, "on") == 0 || strcmp(str, "1") == 0) {
-    *out = true;
-    return 0;
-  }
-
-  if (strcasecmp(str, "false") == 0 || strcasecmp(str, "no") == 0 ||
-      strcasecmp(str, "off") == 0 || strcmp(str, "0") == 0) {
-    *out = false;
-    return 0;
-  }
-
-  return -1;
-}
-
 // ==================== 配置实现 ====================
 
 void config_init(config_t *config) {
@@ -110,8 +89,8 @@ void config_init(config_t *config) {
   config->map_size = CONFIG_DEFAULT_MAP_SIZE;
   config->max_connections = CONFIG_DEFAULT_MAX_CONNECTIONS;
   config->txn_timeout = CONFIG_DEFAULT_TXN_TIMEOUT;
-  config->daemon = CONFIG_DEFAULT_DAEMON;
   config->log_level = CONFIG_DEFAULT_LOG_LEVEL;
+  strncpy(config->log_output, CONFIG_DEFAULT_LOG_OUTPUT, CONFIG_MAX_LOG_OUTPUT - 1);
 }
 
 int config_load(config_t *config, const char *path) {
@@ -154,7 +133,6 @@ int config_load(config_t *config, const char *path) {
     // 解析各个配置项
     int int_val;
     size_t size_val;
-    bool bool_val;
 
     if (strcmp(key, "host") == 0) {
       strncpy(config->host, value, CONFIG_MAX_HOST - 1);
@@ -168,10 +146,10 @@ int config_load(config_t *config, const char *path) {
       config->max_connections = int_val;
     } else if (strcmp(key, "txn_timeout") == 0 && parse_int(value, &int_val) == 0) {
       config->txn_timeout = int_val;
-    } else if (strcmp(key, "daemon") == 0 && parse_bool(value, &bool_val) == 0) {
-      config->daemon = bool_val;
     } else if (strcmp(key, "log_level") == 0 && parse_int(value, &int_val) == 0) {
       config->log_level = int_val;
+    } else if (strcmp(key, "log_output") == 0) {
+      strncpy(config->log_output, value, CONFIG_MAX_LOG_OUTPUT - 1);
     } else {
       fprintf(stderr, "Warning: Unknown config key '%s' at line %d\n", key, line_num);
     }
@@ -192,7 +170,6 @@ int config_parse_args(config_t *config, int argc, char **argv) {
       {"max-connections", required_argument, 0, 'c'},
       {"txn-timeout", required_argument, 0, 't'},
       {"config", required_argument, 0, 'C'},
-      {"daemon", no_argument, 0, 'D'},
       {"log-level", required_argument, 0, 'l'},
       {"help", no_argument, 0, 'h'},
       {0, 0, 0, 0}};
@@ -200,7 +177,7 @@ int config_parse_args(config_t *config, int argc, char **argv) {
   int opt;
   int option_index = 0;
 
-  while ((opt = getopt_long(argc, argv, "H:p:d:m:c:t:C:Dl:h", long_options,
+  while ((opt = getopt_long(argc, argv, "H:p:d:m:c:t:C:l:o:h", long_options,
                             &option_index)) != -1) {
     int int_val;
     size_t size_val;
@@ -250,16 +227,16 @@ int config_parse_args(config_t *config, int argc, char **argv) {
       strncpy(config->config_path, optarg, CONFIG_MAX_PATH - 1);
       break;
 
-    case 'D':
-      config->daemon = true;
-      break;
-
     case 'l':
       if (parse_int(optarg, &int_val) != 0 || int_val < 0 || int_val > 3) {
         fprintf(stderr, "Error: Invalid log_level value: %s (must be 0-3)\n", optarg);
         return -1;
       }
       config->log_level = int_val;
+      break;
+
+    case 'o':
+      strncpy(config->log_output, optarg, CONFIG_MAX_LOG_OUTPUT - 1);
       break;
 
     case 'h':
@@ -299,8 +276,8 @@ void config_print(const config_t *config) {
   printf("  Map Size:       %zu bytes\n", config->map_size);
   printf("  Max Connections:%d\n", config->max_connections);
   printf("  Txn Timeout:    %d seconds\n", config->txn_timeout);
-  printf("  Daemon:         %s\n", config->daemon ? "yes" : "no");
   printf("  Log Level:      %d\n", config->log_level);
+  printf("  Log Output:     %s\n", config->log_output);
 }
 
 void config_print_usage(const char *program_name) {
@@ -313,10 +290,10 @@ void config_print_usage(const char *program_name) {
   printf("  -c, --max-connections <n> Max connections (default: %d)\n", CONFIG_DEFAULT_MAX_CONNECTIONS);
   printf("  -t, --txn-timeout <sec>  Transaction timeout in seconds (default: %d)\n", CONFIG_DEFAULT_TXN_TIMEOUT);
   printf("  -C, --config <file>      Config file path (default: %s)\n", CONFIG_DEFAULT_PATH);
-  printf("  -D, --daemon             Run as daemon process\n");
   printf("  -l, --log-level <0-3>    Log level: 0=DEBUG, 1=INFO, 2=WARN, 3=ERROR (default: %d)\n", CONFIG_DEFAULT_LOG_LEVEL);
+  printf("  -o, --log-output <path>  Log output: stdout/stderr/file (default: %s)\n", CONFIG_DEFAULT_LOG_OUTPUT);
   printf("  -h, --help               Show this help message\n");
   printf("\nExample:\n");
   printf("  %s -p 8080 -d /data/lmjcore\n", program_name);
-  printf("  %s -C /etc/lmjcore.conf --daemon\n", program_name);
+  printf("  %s -C /etc/lmjcore.conf\n", program_name);
 }

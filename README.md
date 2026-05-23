@@ -40,9 +40,6 @@ make
 # 使用配置文件
 ./lmjcore_server -C /etc/lmjcore.conf
 
-# 守护进程模式
-./lmjcore_server --daemon
-
 # 查看帮助
 ./lmjcore_server --help
 ```
@@ -72,8 +69,7 @@ port = 8080
 db_path = ./lmjcore_data
 map_size = 10M
 
-# 运行模式
-daemon = false
+# 日志配置
 log_level = 1
 ```
 
@@ -226,7 +222,6 @@ lmjcore-web/
 | `--max-connections` | `-c` | `128` | 最大连接数 |
 | `--txn-timeout` | `-t` | `5` | 事务超时 (秒) |
 | `--config` | `-C` | `lmjcore.conf` | 配置文件路径 |
-| `--daemon` | `-D` | `false` | 守护进程模式 |
 | `--log-level` | `-l` | `1` | 日志级别 (0-3) |
 | `--help` | `-h` | - | 显示帮助 |
 

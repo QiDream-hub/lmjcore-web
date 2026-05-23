@@ -300,29 +300,8 @@ int http_server_init(http_server_t *server, const server_config_t *config) {
     }
   }
 
-  // 创建路由器并注册所有路由
-  server->router = router_create();
-  if (!server->router) {
-    dzlog_error("Failed to create router");
-    if (server->env) {
-      lmjcore_cleanup(server->env);
-      server->env = NULL;
-    }
-    free(server->config.host);
-    return -1;
-  }
-
-  if (register_all_routes(server->router) != 0) {
-    dzlog_error("Failed to register routes");
-    router_destroy(server->router);
-    server->router = NULL;
-    if (server->env) {
-      lmjcore_cleanup(server->env);
-      server->env = NULL;
-    }
-    free(server->config.host);
-    return -1;
-  }
+  // 注意：路由器由调用者创建和管理，这里不创建
+  server->router = NULL;
 
   server->listen_fd = SOCKET_ERROR_VAL;
   server->running = false;
@@ -452,9 +431,11 @@ int http_server_start(http_server_t *server) {
 #endif
   }
 
-  // 关闭监听套接字
-  CLOSE_SOCKET(server->listen_fd);
-  server->listen_fd = SOCKET_ERROR_VAL;
+  // 关闭监听套接字（如果还未关闭）
+  if (server->listen_fd != SOCKET_ERROR_VAL) {
+    CLOSE_SOCKET(server->listen_fd);
+    server->listen_fd = SOCKET_ERROR_VAL;
+  }
 
   return 0;
 }
@@ -464,7 +445,6 @@ void http_server_stop(http_server_t *server) {
     return;
   }
 
-  dzlog_info("Stopping server...");
   server->running = false;
 
   // 关闭监听套接字以中断 accept
@@ -479,28 +459,19 @@ void http_server_destroy(http_server_t *server) {
     return;
   }
 
-  // 停止服务器
-  http_server_stop(server);
-
   // 释放配置中的动态分配内存
   if (server->config.host) {
     free(server->config.host);
     server->config.host = NULL;
   }
 
-  // 释放路由器
-  if (server->router) {
-    router_destroy(server->router);
-    server->router = NULL;
-  }
+  // 注意：路由器由调用者管理，这里不释放
 
   // 关闭 LMDB 环境
   if (server->env) {
     lmjcore_cleanup(server->env);
     server->env = NULL;
   }
-
-  // 注意：router 由调用者管理，这里不释放
 
 #ifdef _WIN32
   WSACleanup();

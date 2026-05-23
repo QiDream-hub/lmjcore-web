@@ -252,21 +252,32 @@ http_request_t *http_parser_get_request(http_parser_context_t *ctx) {
   if (!pub_req) return NULL;
 
   pub_req->method = (int)local_req->method;
-  
+
   pub_req->url = local_req->url ? strdup(local_req->url) : NULL;
   if (!pub_req->url) {
     free(pub_req);
     return NULL;
   }
-  
+
+  // 仅在本地请求有 body 时才复制（允许空 body 请求，如 POST /obj）
   pub_req->body = local_req->body ? strdup(local_req->body) : NULL;
   pub_req->body_len = local_req->body_len;
-  
+
   pub_req->content_type =
       local_req->content_type ? strdup(local_req->content_type) : NULL;
   pub_req->content_length =
       local_req->content_length ? strdup(local_req->content_length) : NULL;
   pub_req->host = local_req->host ? strdup(local_req->host) : NULL;
+
+  // 检查关键资源分配失败（url 必须存在，其他可选）
+  if (!pub_req->url) {
+    free(pub_req->body);
+    free(pub_req->content_type);
+    free(pub_req->content_length);
+    free(pub_req->host);
+    free(pub_req);
+    return NULL;
+  }
 
   return pub_req;
 }

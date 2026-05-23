@@ -31,44 +31,41 @@
 
 ### 2.1 系统架构图
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    HTTP Client                          │
-└─────────────────────────────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────┐
-│                   HTTP Server Layer                     │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐ │
-│  │http_parser  │  │   routes    │  │http_server      │ │
-│  │(解析请求)   │  │(路由分发)   │  │(监听/响应)      │ │
-│  └─────────────┘  └─────────────┘  └─────────────────┘ │
-└─────────────────────────────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────┐
-│                 Handler Layer                           │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐ │
-│  │obj_handle   │  │set_handle   │  │utils_handle     │ │
-│  │(对象操作)   │  │(集合操作)   │  │(工具接口)       │ │
-│  └─────────────┘  └─────────────┘  └─────────────────┘ │
-│  ┌─────────────────────────────────────────────────────┐│
-│  │              handle_utils (通用工具)                ││
-│  │  [指针转换] [路径解析] [值编解码] [响应构建]        ││
-│  └─────────────────────────────────────────────────────┘│
-└─────────────────────────────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────┐
-│                      LMJCore                            │
-│                 (核心存储引擎)                           │
-└─────────────────────────────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────┐
-│                      LMDB                               │
-│                 (底层存储引擎)                           │
-└─────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    Client["HTTP Client"]
+
+    subgraph HTTP_Server_Layer ["HTTP Server Layer"]
+        Parser["http_parser<br/>(解析请求)"]
+        Routes["routes<br/>(路由分发)"]
+        Server["http_server<br/>(监听/响应)"]
+    end
+
+    subgraph Handler_Layer ["Handler Layer"]
+        ObjHandle["obj_handle<br/>(对象操作)"]
+        SetHandle["set_handle<br/>(集合操作)"]
+        UtilsHandle["utils_handle<br/>(工具接口)"]
+        
+        subgraph Handle_Utils ["handle_utils (通用工具)"]
+            Utils["[指针转换] [路径解析]<br/>[值编解码] [响应构建]"]
+        end
+    end
+
+    LMJCore["LMJCore<br/>(核心存储引擎)"]
+    LMDB["LMDB<br/>(底层存储引擎)"]
+
+    Client --> Server
+    Parser --> Routes
+    Routes --> Server
+
+    Server --> Handler_Layer
+
+    ObjHandle --> Handle_Utils
+    SetHandle --> Handle_Utils
+    UtilsHandle --> Handle_Utils
+
+    Handle_Utils --> LMJCore
+    LMJCore --> LMDB
 ```
 
 ### 2.2 模块分层
@@ -318,7 +315,6 @@ LMJCore-Web 支持三种配置方式，优先级从高到低为：
 | `--max-connections <n>` | `-c` | 最大连接数 | `128` |
 | `--txn-timeout <sec>` | `-t` | 事务超时 (秒) | `5` |
 | `--config <file>` | `-C` | 配置文件路径 | `lmjcore.conf` |
-| `--daemon` | `-D` | 守护进程模式 | `false` |
 | `--log-level <0-3>` | `-l` | 日志级别 (0=DEBUG, 3=ERROR) | `1` |
 | `--help` | `-h` | 显示帮助信息 | - |
 
@@ -331,8 +327,8 @@ LMJCore-Web 支持三种配置方式，优先级从高到低为：
 # 指定端口和数据库路径
 ./lmjcore_server -p 9000 -d /data/lmjcore
 
-# 使用配置文件并以后台模式运行
-./lmjcore_server -C /etc/lmjcore.conf --daemon
+# 使用配置文件
+./lmjcore_server -C /etc/lmjcore.conf
 
 # 调试模式（显示详细配置）
 ./lmjcore_server -l 0
@@ -380,11 +376,8 @@ max_connections = 128
 txn_timeout = 5
 
 # ----------------------------
-# 运行模式配置
+# 日志配置
 # ----------------------------
-
-# 是否以守护进程模式运行 (默认：false)
-daemon = false
 
 # 日志级别 (0=DEBUG, 1=INFO, 2=WARN, 3=ERROR)
 log_level = 1
@@ -542,14 +535,6 @@ sudo systemctl start lmjcore
 sudo systemctl status lmjcore
 ```
 
-### 10.2 守护进程模式
-
-也可直接使用内置的守护进程模式：
-
-```bash
-./lmjcore_server --config /etc/lmjcore.conf --daemon
-```
-
 ### 10.3 日志管理
 
 LMJCore-Web 内置了统一的日志系统，支持级别控制和彩色输出。
@@ -594,7 +579,6 @@ log_level = 1  # 在 lmjcore.conf 中
 
 - 自动彩色输出（终端模式下）
 - 警告和错误自动输出到 stderr
-- 守护进程模式自动禁用颜色
 - 线程安全的日志输出
 
 ---

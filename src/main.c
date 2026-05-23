@@ -8,65 +8,21 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <sys/stat.h>
-#include <sys/types.h>
 
 // 全局服务器指针，用于信号处理
 static http_server_t *g_server = NULL;
+// 原子标志，防止重复停止
+static volatile sig_atomic_t g_server_stopping = 0;
 
-// 信号处理函数
+// 信号处理函数 (只设置标志，不做复杂操作)
 static void signal_handler(int sig) {
   if (sig == SIGINT || sig == SIGTERM) {
-    dzlog_info("Received signal %d, shutting down...", sig);
-    if (g_server) {
+    // 防止重复停止
+    if (g_server && g_server_stopping == 0) {
+      g_server_stopping = 1;
       http_server_stop(g_server);
     }
   }
-}
-
-/**
- * @brief 守护进程模式
- */
-static void daemonize(void) {
-  pid_t pid;
-
-  // 第一次 fork，创建子进程并退出父进程
-  pid = fork();
-  if (pid < 0) {
-    dzlog_error("Failed to fork");
-    exit(1);
-  }
-  if (pid > 0) {
-    // 父进程退出
-    exit(0);
-  }
-
-  // 创建新会话
-  if (setsid() < 0) {
-    dzlog_error("Failed to setsid");
-    exit(1);
-  }
-
-  // 第二次 fork，确保不会是会话首领
-  pid = fork();
-  if (pid < 0) {
-    dzlog_error("Failed to fork");
-    exit(1);
-  }
-  if (pid > 0) {
-    exit(0);
-  }
-
-  // 更改工作目录到根目录
-  chdir("/");
-
-  // 设置文件权限掩码
-  umask(0);
-
-  // 关闭所有文件描述符 (可选)
-  // for (int i = 0; i < 1024; i++) {
-  //   close(i);
-  // }
 }
 
 int main(int argc, char **argv) {
@@ -102,33 +58,43 @@ int main(int argc, char **argv) {
     default: zlog_level_str = "INFO"; break;
   }
 
-  char zlog_config[512];
-  snprintf(zlog_config, sizeof(zlog_config),
+  // 解析日志输出目标
+  const char *log_output = ">stdout";
+  if (strcmp(config.log_output, "stderr") == 0) {
+    log_output = ">stderr";
+  } else if (strcmp(config.log_output, "stdout") != 0) {
+    // 假设是文件路径
+    log_output = config.log_output;
+  }
+
+  char zlog_config[1024];
+  int written = snprintf(zlog_config, sizeof(zlog_config),
     "[global]\n"
-    "strict = 0\n"
-    "default = main\n"
-    "[main]\n"
-    "level = %s\n"
-    "format = \"%%d %%V %%-6c [%%F:%%L] %%m%%n\"\n"
-    "file = /dev/stdout\n",
-    zlog_level_str
+    "strict init = false\n"
+    "default format = \"%%d %%V %%-6c [%%F:%%L] %%m%%n\"\n"
+    "[rules]\n"
+  );
+  // 追加级别和输出目标
+  snprintf(zlog_config + written, sizeof(zlog_config) - written,
+    "main.%s        %s;\n",
+    zlog_level_str, log_output
   );
 
-  // 初始化 zlog 日志系统
-  if (zlog_init("zlog.conf") != 0) {
-    fprintf(stderr, "Failed to initialize zlog with config file, using default config\n");
-    zlog_init_from_string(zlog_config);
+  // 初始化 zlog 日志系统（直接使用配置字符串，不依赖外部文件）
+  if (zlog_init_from_string(zlog_config) != 0) {
+    fprintf(stderr, "Failed to initialize zlog\n");
+    return 1;
+  }
+
+  // 设置默认 category 为 main
+  if (dzlog_set_category("main") != 0) {
+    fprintf(stderr, "Failed to set zlog category\n");
+    return 1;
   }
 
   // 打印配置信息 (调试模式)
   if (config.log_level == 0) {
     config_print(&config);
-  }
-
-  // 守护进程模式
-  if (config.daemon) {
-    dzlog_info("Starting daemon mode...");
-    daemonize();
   }
 
   // 设置信号处理
@@ -177,10 +143,12 @@ int main(int argc, char **argv) {
   // 启动服务器（阻塞）
   dzlog_info("Starting LMJCore HTTP Server on %s:%d ...", config.host, config.port);
   dzlog_info("Database path: %s", config.db_path);
-  if (config.daemon) {
-    dzlog_info("Running in daemon mode");
-  }
   int rc = http_server_start(&server);
+
+  // 服务器停止后输出日志
+  if (g_server_stopping) {
+    dzlog_info("Received signal, server stopped");
+  }
 
   // 清理资源
   router_destroy(router);

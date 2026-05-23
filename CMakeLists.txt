@@ -116,7 +116,6 @@ set(SERVER_SOURCES
     ${SERVER_SRC_DIR}/main.c
     ${SERVER_SRC_DIR}/routes.c
     ${SERVER_SRC_DIR}/config.c
-    ${SERVER_SRC_DIR}/log.c
     ${SERVER_SRC_DIR}/http_server.c
     ${SERVER_SRC_DIR}/http_parser.c
     ${SERVER_SRC_DIR}/handlers/batch_handle.c
@@ -124,6 +123,7 @@ set(SERVER_SOURCES
     ${SERVER_SRC_DIR}/handlers/set_handle.c
     ${SERVER_SRC_DIR}/handlers/utils_handle.c
     ${SERVER_SRC_DIR}/handlers/handle_utils.c
+    ${SERVER_SRC_DIR}/handlers/query_handle.c
 )
 
 # 4.2 LMJCore 核心源文件
@@ -160,6 +160,11 @@ set(ALL_SOURCES
 # -----------------------------------------------------------
 add_subdirectory(${THIRDPARTY_DIR}/cJSON)
 
+# zlog 日志库子模块
+set(BUILD_SHARED_LIBS ON CACHE BOOL "Build shared libraries" FORCE)
+set(UNIT_TEST OFF CACHE BOOL "Build unit tests" FORCE)
+add_subdirectory(${THIRDPARTY_DIR}/zlog)
+
 # -----------------------------------------------------------
 # 6. 构建可执行文件
 # -----------------------------------------------------------
@@ -171,6 +176,7 @@ target_include_directories(lmjcore_server PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/handlers
     ${LMDB_INCLUDE_DIRS}
     ${LLHTTP_INCLUDE_DIRS}
+    ${THIRDPARTY_DIR}/zlog/src
     ${THIRDPARTY_DIR}/LMJCore/core/include
     ${THIRDPARTY_DIR}/LMJCore/Toolkit/ptr_uuid_gen/include
     ${THIRDPARTY_DIR}/URLRouter/include
@@ -187,10 +193,13 @@ target_link_libraries(lmjcore_server
     # 2. llhttp HTTP 解析库（系统库）
     ${LLHTTP_LIBRARIES}
 
-    # 3. cJSON JSON 解析库（子模块，库名为小写 cjson）
+    # 3. zlog 日志库（子模块）
+    zlog
+
+    # 4. cJSON JSON 解析库（子模块，库名为小写 cjson）
     cjson
 
-    # 4. 再链接系统库
+    # 5. 再链接系统库
     pthread
     rt
     m

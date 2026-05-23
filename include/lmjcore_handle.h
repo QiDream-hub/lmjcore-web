@@ -49,6 +49,9 @@ int handle_obj_member_del(void *params, void *cbdata);
  */
 int handle_obj_del(void *params, void *cbdata);
 
+// ==================== 链式查询处理器 ====================
+// 实现文件：src/handlers/query_handle.c
+
 /**
  * @brief GET /obj/query - 链式查询
  */

@@ -7,3 +7,6 @@
 [submodule "thirdparty/cJSON"]
 	path = thirdparty/cJSON
 	url = https://github.com/DaveGamble/cJSON.git
+[submodule "thirdparty/zlog"]
+	path = thirdparty/zlog
+	url = git@github.com:HardySimpson/zlog.git

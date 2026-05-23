@@ -1,7 +1,7 @@
 #include "http_server.h"
 #include "handle_utils.h"
 #include "lmjcore_handle.h"
-#include "log.h"
+#include "zlog.h"
 #include "lmjcore.h"
 #include "routes.h"
 #include <errno.h>
@@ -47,11 +47,11 @@ typedef struct {
 static void log_request(const char *method, const char *url, int status_code,
                         const char *client_ip) {
   if (status_code >= 500) {
-    LOG_ERROR("%s - %s %s -> %d", client_ip, method, url, status_code);
+    dzlog_error("%s - %s %s -> %d", client_ip, method, url, status_code);
   } else if (status_code >= 400) {
-    LOG_WARN("%s - %s %s -> %d", client_ip, method, url, status_code);
+    dzlog_warn("%s - %s %s -> %d", client_ip, method, url, status_code);
   } else {
-    LOG_INFO("%s - %s %s -> %d", client_ip, method, url, status_code);
+    dzlog_info("%s - %s %s -> %d", client_ip, method, url, status_code);
   }
 }
 
@@ -294,7 +294,7 @@ int http_server_init(http_server_t *server, const server_config_t *config) {
                           server->config.env_flags, server->config.fn, NULL,
                           &server->env);
     if (rc != 0) {
-      LOG_ERROR("Failed to create LMDB environment at %s", server->config.db_path);
+      dzlog_error("Failed to create LMDB environment at %s", server->config.db_path);
       free(server->config.host);
       return -1;
     }
@@ -303,7 +303,7 @@ int http_server_init(http_server_t *server, const server_config_t *config) {
   // 创建路由器并注册所有路由
   server->router = router_create();
   if (!server->router) {
-    LOG_ERROR("Failed to create router");
+    dzlog_error("Failed to create router");
     if (server->env) {
       lmjcore_cleanup(server->env);
       server->env = NULL;
@@ -313,7 +313,7 @@ int http_server_init(http_server_t *server, const server_config_t *config) {
   }
 
   if (register_all_routes(server->router) != 0) {
-    LOG_ERROR("Failed to register routes");
+    dzlog_error("Failed to register routes");
     router_destroy(server->router);
     server->router = NULL;
     if (server->env) {
@@ -331,7 +331,7 @@ int http_server_init(http_server_t *server, const server_config_t *config) {
   // Windows 需要初始化 Winsock
   WSADATA wsa_data;
   if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0) {
-    LOG_ERROR("WSAStartup failed");
+    dzlog_error("WSAStartup failed");
     lmjcore_env_close(server->env);
     free(server->config.host);
     return -1;
@@ -369,7 +369,7 @@ int http_server_start(http_server_t *server) {
     addr.sin_addr.s_addr = INADDR_ANY;
   } else {
     if (inet_pton(AF_INET, server->config.host, &addr.sin_addr) <= 0) {
-      LOG_ERROR("Invalid host address: %s", server->config.host);
+      dzlog_error("Invalid host address: %s", server->config.host);
       CLOSE_SOCKET(server->listen_fd);
       return -1;
     }
@@ -388,11 +388,11 @@ int http_server_start(http_server_t *server) {
     return -1;
   }
 
-  LOG_INFO("LMJCore HTTP Server started on %s:%d", server->config.host,
+  dzlog_info("LMJCore HTTP Server started on %s:%d", server->config.host,
            server->config.port);
-  LOG_INFO("Database path: %s",
+  dzlog_info("Database path: %s",
            server->config.db_path ? server->config.db_path : "(none)");
-  LOG_INFO("Press Ctrl+C to stop");
+  dzlog_info("Press Ctrl+C to stop");
 
   // 设置运行标志
   server->running = true;
@@ -420,7 +420,7 @@ int http_server_start(http_server_t *server) {
     // 创建线程参数
     thread_args_t *args = (thread_args_t *)malloc(sizeof(thread_args_t));
     if (!args) {
-      LOG_ERROR("Failed to allocate thread args");
+      dzlog_error("Failed to allocate thread args");
       CLOSE_SOCKET(client_fd);
       continue;
     }
@@ -436,7 +436,7 @@ int http_server_start(http_server_t *server) {
     if (thread) {
       CloseHandle(thread);
     } else {
-      LOG_ERROR("Failed to create thread");
+      dzlog_error("Failed to create thread");
       CLOSE_SOCKET(client_fd);
       free(args);
     }
@@ -464,7 +464,7 @@ void http_server_stop(http_server_t *server) {
     return;
   }
 
-  LOG_INFO("Stopping server...");
+  dzlog_info("Stopping server...");
   server->running = false;
 
   // 关闭监听套接字以中断 accept
@@ -506,5 +506,5 @@ void http_server_destroy(http_server_t *server) {
   WSACleanup();
 #endif
 
-  LOG_INFO("Server destroyed");
+  dzlog_info("Server destroyed");
 }

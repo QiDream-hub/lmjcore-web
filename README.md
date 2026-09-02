@@ -84,6 +84,7 @@ log_level = 1
 | 方法 | 端点 | 说明 |
 |------|------|------|
 | `POST` | `/obj` | 创建空对象 |
+| `POST` | `/obj/init` | 创建对象并填充成员（同一事务，支持嵌套） |
 | `GET` | `/obj/{ptr}` | 获取完整对象 |
 | `GET` | `/obj/{ptr}/{member}` | 获取成员值 |
 | `PUT` | `/obj/{ptr}/{member}` | 设置成员值 |
@@ -97,6 +98,7 @@ log_level = 1
 | 方法 | 端点 | 说明 |
 |------|------|------|
 | `POST` | `/set` | 创建空集合 |
+| `POST` | `/set/init` | 创建集合并填充元素（同一事务，支持嵌套） |
 | `GET` | `/set/{ptr}` | 获取完整集合 |
 | `POST` | `/set/{ptr}/elements` | 添加元素 |
 | `DELETE` | `/set/{ptr}/elements` | 删除元素 |
@@ -119,6 +121,15 @@ log_level = 1
 ```bash
 curl -X POST http://localhost:8080/obj
 # 响应：{"ptr":"01abc123def456..."}
+```
+
+### 1b. 创建对象并填充成员（同一事务，支持嵌套，原子操作）
+
+```bash
+curl -X POST http://localhost:8080/obj/init \
+  -H "Content-Type: application/json" \
+  -d '{"username":"alice","age":30,"email":null,"profile":{"city":"北京","tags":["a","b"]}}'
+# 响应：{"ptr":"01abc123def456...","member_count":4}
 ```
 
 ### 2. 设置成员值
@@ -156,6 +167,15 @@ curl -X POST http://localhost:8080/set/02def456.../elements \
   -d '{"value":"apple"}'
 ```
 
+### 5b. 创建集合并填充元素（同一事务，支持嵌套，原子操作）
+
+```bash
+curl -X POST http://localhost:8080/set/init \
+  -H "Content-Type: application/json" \
+  -d '["apple","banana",{"name":"小李"},["a","b"],21]'
+# 响应：{"ptr":"02def456...","element_count":5}
+```
+
 ---
 
 ## 🏗️ 核心特性
@@ -184,6 +204,7 @@ lmjcore-web/
 │   ├── error_codes.h       # 错误码定义
 │   ├── error_response.h    # 错误响应构建
 │   ├── handle_utils.h      # 工具函数
+│   ├── nested_value.h      # 嵌套值统一创建工具（obj/init、set/init 共用）
 │   ├── http_parser.h       # HTTP 解析
 │   ├── http_server.h       # HTTP 服务器
 │   ├── lmjcore_handle.h    # 处理器声明
@@ -197,7 +218,8 @@ lmjcore-web/
 │   │   ├── obj_handle.c    # 对象处理器
 │   │   ├── set_handle.c    # 集合处理器
 │   │   ├── utils_handle.c  # 工具处理器
-│   │   └── handle_utils.c  # 通用工具
+│   │   ├── handle_utils.c  # 通用工具
+│   │   └── nested_value.c  # 嵌套值统一创建工具
 │   ├── http_parser.c
 │   ├── http_server.c
 │   ├── main.c

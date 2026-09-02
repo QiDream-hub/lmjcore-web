@@ -33,6 +33,13 @@ int register_all_routes(router_t *router) {
     return -1;
   }
 
+  // POST /obj/init - 创建对象并填充成员（同一事务，原子操作）
+  if (router_register(router, HTTP_POST, "/$'obj'/$'init'",
+                      handle_obj_init, NULL) != 0) {
+    dzlog_error("Failed to register POST /obj/init");
+    return -1;
+  }
+
   if (router_register(router, HTTP_GET, "/$'obj'/${}", handle_obj_get, NULL) !=
       0) {
     dzlog_error("Failed to register GET /obj/{ptr}");
@@ -74,6 +81,13 @@ int register_all_routes(router_t *router) {
   if (router_register(router, HTTP_POST, "/$'set'", handle_set_create, NULL) !=
       0) {
     dzlog_error("Failed to register POST /set");
+    return -1;
+  }
+
+  // POST /set/init - 创建集合并填充元素（同一事务，原子操作）
+  if (router_register(router, HTTP_POST, "/$'set'/$'init'",
+                      handle_set_init, NULL) != 0) {
+    dzlog_error("Failed to register POST /set/init");
     return -1;
   }
 
@@ -119,6 +133,7 @@ int register_all_routes(router_t *router) {
   dzlog_info("  GET    /batch (readonly)");
   dzlog_info("  POST   /batch (read-write)");
   dzlog_info("  POST   /obj");
+  dzlog_info("  POST   /obj/init");
   dzlog_info("  GET    /obj/{ptr}");
   dzlog_info("  GET    /obj/{ptr}/{member}");
   dzlog_info("  PUT    /obj/{ptr}/{member}");
@@ -126,6 +141,7 @@ int register_all_routes(router_t *router) {
   dzlog_info("  DELETE /obj/{ptr}");
   dzlog_info("  GET    /obj/query");
   dzlog_info("  POST   /set");
+  dzlog_info("  POST   /set/init");
   dzlog_info("  GET    /set/{ptr}");
   dzlog_info("  POST   /set/{ptr}/elements");
   dzlog_info("  DELETE /set/{ptr}/elements");

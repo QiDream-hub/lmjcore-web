@@ -25,6 +25,11 @@ int handle_batch_get(void *params, void *cbdata);
 int handle_obj_create(void *params, void *cbdata);
 
 /**
+ * @brief POST /obj/init - 在同一事务内创建对象并填充全部成员值
+ */
+int handle_obj_init(void *params, void *cbdata);
+
+/**
  * @brief GET /obj/{ptr} - 获取完整对象
  */
 int handle_obj_get(void *params, void *cbdata);
@@ -64,6 +69,11 @@ int handle_obj_query(void *params, void *cbdata);
  * @brief POST /set - 创建空集合
  */
 int handle_set_create(void *params, void *cbdata);
+
+/**
+ * @brief POST /set/init - 在同一事务内创建集合并填充全部元素值
+ */
+int handle_set_init(void *params, void *cbdata);
 
 /**
  * @brief GET /set/{ptr} - 获取完整集合

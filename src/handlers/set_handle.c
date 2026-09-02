@@ -3,6 +3,7 @@
 #include "error_response.h"
 #include "handle_utils.h"
 #include "lmjcore.h"
+#include "nested_value.h"
 #include "router.h"
 
 #include <stdio.h>
@@ -557,4 +558,150 @@ int handle_set_del(void *params, void *cbdata) {
   }
 
   return build_success_response(HTTP_STATUS_OK, "{\"success\":true}", response);
+}
+
+// ==================== 集合初始化处理器（原子创建 + 嵌套元素） ====================
+
+/**
+ * @brief POST /set/init - 在同一事务内创建集合并添加元素值（支持嵌套创建）
+ *
+ * 请求体直接为 JSON 数组：[ <任意 JSON 值>, ... ]
+ * 元素值由嵌套工具统一处理：
+ *   - JSON object -> 同一事务内创建嵌套 obj（存 REF）
+ *   - JSON array  -> 同一事务内创建嵌套 set（存 REF）
+ *   - JSON string -> 自动识别：01/02 开头 34 位 -> REF；"" 或 "null" -> null；其余 -> raw
+ *   - JSON null   -> null；number/bool -> raw（其 JSON 文本）
+ * 集合自动去重：请求内重复元素不报错。
+ *
+ * 成功：HTTP 201，返回 {"ptr":"...","element_count":N}（去重后真实数量）
+ * 失败：自动回滚并返回失败原因 {"error":"..."}（含逐层路径）；
+ *       若运行于批量(batch)共享事务中，不自行提交/回滚，由调用方统一处理
+ */
+int handle_set_init(void *params, void *cbdata) {
+  handle_params_t *hp = (handle_params_t *)params;
+  http_response_t *response = (http_response_t *)cbdata;
+
+  if (!hp || !hp->env) {
+    RETURN_ERROR_INVALID_PARAM(response);
+  }
+
+  // 解析请求体：必须为 JSON 数组（元素列表）
+  cJSON *root = hp->body ? cJSON_ParseWithOpts(hp->body, NULL, 0) : NULL;
+  if (!root) {
+    return build_error_response(HTTP_STATUS_BAD_REQUEST,
+                                "Invalid JSON in request body", response);
+  }
+
+  if (!cJSON_IsArray(root)) {
+    cJSON_Delete(root);
+    return build_error_response(
+        HTTP_STATUS_BAD_REQUEST,
+        "Request body must be a JSON array (element list)", response);
+  }
+
+  // 检查是否已有事务（批量操作场景）
+  lmjcore_txn *txn = NULL;
+  int auto_commit = 1;  // 是否自动提交事务
+
+  if (hp->txn && !hp->auto_manage_txn) {
+    // 使用已有事务（批量操作场景），回滚由调用方负责
+    txn = hp->txn;
+    auto_commit = 0;
+  } else {
+    // 开启写事务
+    int rc = lmjcore_txn_begin(hp->env, NULL, 0, &txn);
+    if (rc != LMJCORE_SUCCESS || !txn) {
+      cJSON_Delete(root);
+      RETURN_ERROR_TXN_FAILED("begin", response);
+    }
+  }
+
+  // 检查事务超时
+  CHECK_TXN_TIMEOUT(hp, response, txn);
+
+  // 1. 创建根集合
+  lmjcore_ptr set_ptr;
+  int rc = lmjcore_set_create(txn, set_ptr);
+  if (rc != LMJCORE_SUCCESS) {
+    if (auto_commit) {
+      lmjcore_txn_abort(txn);
+    }
+    cJSON_Delete(root);
+    build_lmjcore_error_response(rc, response);
+    return -1;
+  }
+
+  // 2. 逐个添加元素（值可为任意 JSON，嵌套对象/数组由工具自动创建）
+  char err[1024];
+  char reason[1152];
+  int index = 0;
+  const cJSON *item = NULL;
+  for (item = root->child; item; item = item->next) {
+    uint8_t *enc = NULL;
+    size_t enc_len = 0;
+    rc = lmjcore_json_encode_value(txn, item, 0, err, sizeof(err), &enc,
+                                   &enc_len);
+    if (rc != LMJCORE_SUCCESS) {
+      snprintf(reason, sizeof(reason), "%s (in element [%d])", err, index);
+      if (auto_commit) {
+        lmjcore_txn_abort(txn);
+      }
+      cJSON_Delete(root);
+      return build_error_response(lmjcore_error_to_http_status(rc), reason,
+                                  response);
+    }
+
+    // 添加元素（重复元素自动去重，不报错）
+    rc = lmjcore_set_add(txn, set_ptr, enc, enc_len);
+    free(enc);
+    if (rc == LMJCORE_ERROR_MEMBER_EXISTS) {
+      rc = LMJCORE_SUCCESS;
+    }
+    if (rc != LMJCORE_SUCCESS) {
+      snprintf(reason, sizeof(reason), "%s (in element [%d])",
+               lmjcore_strerror(rc), index);
+      if (auto_commit) {
+        lmjcore_txn_abort(txn);
+      }
+      cJSON_Delete(root);
+      return build_error_response(lmjcore_error_to_http_status(rc), reason,
+                                  response);
+    }
+    index++;
+  }
+
+  // 3. 统计去重后的真实元素数量（提交前在同一事务内读取）
+  size_t distinct_count = 0;
+  size_t total_value_len = 0;
+  rc = lmjcore_set_stat(txn, set_ptr, &total_value_len, &distinct_count);
+  if (rc != LMJCORE_SUCCESS) {
+    if (auto_commit) {
+      lmjcore_txn_abort(txn);
+    }
+    cJSON_Delete(root);
+    build_lmjcore_error_response(rc, response);
+    return -1;
+  }
+
+  // 4. 提交事务（仅当自动管理时）
+  if (auto_commit) {
+    rc = lmjcore_txn_commit(txn);
+    if (rc != LMJCORE_SUCCESS) {
+      lmjcore_txn_abort(txn);
+      cJSON_Delete(root);
+      RETURN_ERROR_TXN_FAILED("commit", response);
+    }
+  }
+
+  cJSON_Delete(root);
+
+  // 将指针转换为字符串并构建响应
+  char ptr_str[LMJCORE_PTR_STRING_LEN + 1];
+  lmjcore_ptr_to_string(set_ptr, ptr_str, sizeof(ptr_str));
+
+  char json_buf[512];
+  snprintf(json_buf, sizeof(json_buf), "{\"ptr\":\"%s\",\"element_count\":%zu}",
+           ptr_str, distinct_count);
+
+  return build_success_response(HTTP_STATUS_CREATED, json_buf, response);
 }

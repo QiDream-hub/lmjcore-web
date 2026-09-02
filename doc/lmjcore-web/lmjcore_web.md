@@ -144,6 +144,7 @@ include/
 | 函数 | HTTP 方法 | 路径 | 说明 |
 |------|-----------|------|------|
 | `handle_obj_create` | POST | `/obj` | 创建空对象 |
+| `handle_obj_init` | POST | `/obj/init` | 创建对象并填充成员（同一事务，支持嵌套） |
 | `handle_obj_get` | GET | `/obj/{ptr}` | 获取完整对象 |
 | `handle_obj_member_get` | GET | `/obj/{ptr}/{member}` | 获取成员值 |
 | `handle_obj_member_put` | PUT | `/obj/{ptr}/{member}` | 设置成员值 |
@@ -156,6 +157,7 @@ include/
 | 函数 | HTTP 方法 | 路径 | 说明 |
 |------|-----------|------|------|
 | `handle_set_create` | POST | `/set` | 创建空集合 |
+| `handle_set_init` | POST | `/set/init` | 创建集合并填充元素（同一事务，支持嵌套） |
 | `handle_set_get` | GET | `/set/{ptr}` | 获取完整集合 |
 | `handle_set_add` | POST | `/set/{ptr}/elements` | 添加元素 |
 | `handle_set_remove` | DELETE | `/set/{ptr}/elements` | 删除元素 |

@@ -42,6 +42,7 @@ lmjcore-web/
 │   ├── error_codes.h       # 错误码定义与 HTTP 映射
 │   ├── error_response.h    # 统一错误响应构建宏
 │   ├── handle_utils.h      # 工具函数声明
+│   ├── nested_value.h      # 嵌套值统一创建工具
 │   ├── http_parser.h       # HTTP 解析器接口
 │   ├── http_server.h       # HTTP 服务器接口
 │   ├── lmjcore_handle.h    # 处理器声明 (聚合头文件)
@@ -57,7 +58,8 @@ lmjcore-web/
 │       ├── obj_handle.c    # 对象 CRUD 处理器
 │       ├── set_handle.c    # 集合 CRUD 处理器
 │       ├── utils_handle.c  # 工具接口处理器
-│       └── handle_utils.c  # 通用工具函数
+│       ├── handle_utils.c  # 通用工具函数
+│       └── nested_value.c  # 嵌套值统一创建工具
 ├── tests/                  # 测试文件
 │   └── api_test.html       # API 测试工具 (浏览器)
 └── thirdparty/             # 第三方子模块
@@ -125,6 +127,7 @@ curl http://localhost:8080/obj/{ptr}
 | 方法 | 端点 | 说明 |
 |------|------|------|
 | `POST` | `/obj` | 创建空对象 |
+| `POST` | `/obj/init` | 创建对象并填充成员（同一事务，支持嵌套） |
 | `GET` | `/obj/{ptr}` | 获取完整对象 |
 | `GET` | `/obj/{ptr}/{member}` | 获取成员值 |
 | `PUT` | `/obj/{ptr}/{member}` | 设置成员值 |
@@ -136,6 +139,7 @@ curl http://localhost:8080/obj/{ptr}
 | 方法 | 端点 | 说明 |
 |------|------|------|
 | `POST` | `/set` | 创建空集合 |
+| `POST` | `/set/init` | 创建集合并填充元素（同一事务，支持嵌套） |
 | `GET` | `/set/{ptr}` | 获取完整集合 |
 | `POST` | `/set/{ptr}/elements` | 添加元素 |
 | `DELETE` | `/set/{ptr}/elements` | 删除元素 |

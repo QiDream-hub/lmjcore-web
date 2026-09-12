@@ -8,7 +8,7 @@
 |------|------|
 | **类型** | HTTP 服务器 / API 服务 |
 | **语言** | C (C11 标准) |
-| **核心依赖** | LMDB, LMJCore, URLRouter, llhttp, zlog |
+| **核心依赖** | LMDB, LMJCore, URLRouter (内含 Stride 子模块), llhttp, zlog |
 | **构建系统** | CMake |
 | **目标平台** | Linux, macOS |
 
@@ -64,7 +64,7 @@ lmjcore-web/
 │   └── api_test.html       # API 测试工具 (浏览器)
 └── thirdparty/             # 第三方子模块
     ├── LMJCore/            # LMJCore 存储引擎
-    ├── URLRouter/          # URL 路由库
+    ├── URLRouter/          # URL 路由库（序列引擎 Stride 为其子模块）
     ├── cJSON/              # JSON 解析库
     └── zlog/               # zlog 日志库
 ```

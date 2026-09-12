@@ -121,8 +121,8 @@ int main(int argc, char **argv) {
 
   g_server = &server;
 
-  // 创建路由器
-  router_t *router = router_create();
+  // 创建路由器（URL 路径分隔符为 '/'）
+  router_t *router = router_create('/');
   if (!router) {
     dzlog_error("Failed to create router");
     http_server_destroy(&server);

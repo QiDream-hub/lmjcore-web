@@ -107,6 +107,17 @@ set(LMJCoreToolkit_DIR ${THIRDPARTY_DIR}/LMJCore/Toolkit/ptr_uuid_gen)
 # URLRouter 路径
 set(URLRouter_DIR ${THIRDPARTY_DIR}/URLRouter/src)
 
+# Stride 路径（URLRouter 的子模块：提供序列构建与通用执行引擎）
+set(Stride_DIR ${THIRDPARTY_DIR}/URLRouter/third_party/Stride)
+set(Stride_SRC_DIR ${Stride_DIR}/src)
+set(Stride_INCLUDE_DIR ${Stride_DIR}/include)
+
+if(NOT EXISTS ${Stride_DIR}/Makefile)
+    message(FATAL_ERROR
+        "Stride submodule not found at ${Stride_DIR}.\n"
+        "请先初始化子模块: git submodule update --init --recursive")
+endif()
+
 # -----------------------------------------------------------
 # 4. 收集源文件
 # -----------------------------------------------------------
@@ -138,14 +149,20 @@ set(TOOLKIT_SOURCES
 )
 
 # 4.4 URLRouter 源文件
+# 重构后：语法/编译器层（pattern.c / pattern_compile.c）迁入 URLRouter，
+# 匹配与提取的执行引擎由 Stride 子模块提供。
 set(URLROUTER_SOURCES
     ${URLRouter_DIR}/router.c
     ${URLRouter_DIR}/route_tree.c
-    ${URLRouter_DIR}/pattern_compiler.c
-    ${URLRouter_DIR}/extractor.c
-    ${URLRouter_DIR}/lexer.c
-    ${URLRouter_DIR}/feature_compiler.c
-    ${URLRouter_DIR}/extractor_compiler.c
+    ${URLRouter_DIR}/pattern.c
+    ${URLRouter_DIR}/pattern_compile.c
+)
+
+# 4.5 Stride 源文件（URLRouter 的执行引擎依赖）
+set(STRIDE_SOURCES
+    ${Stride_SRC_DIR}/sequence.c
+    ${Stride_SRC_DIR}/matcher.c
+    ${Stride_SRC_DIR}/extractor.c
 )
 
 # 汇总所有源文件
@@ -154,6 +171,7 @@ set(ALL_SOURCES
     ${LMJCORE_LIB_SOURCES}
     ${TOOLKIT_SOURCES}
     ${URLROUTER_SOURCES}
+    ${STRIDE_SOURCES}
 )
 
 # -----------------------------------------------------------
@@ -181,6 +199,7 @@ target_include_directories(lmjcore_server PRIVATE
     ${THIRDPARTY_DIR}/LMJCore/core/include
     ${THIRDPARTY_DIR}/LMJCore/Toolkit/ptr_uuid_gen/include
     ${THIRDPARTY_DIR}/URLRouter/include
+    ${Stride_INCLUDE_DIR}
     ${THIRDPARTY_DIR}/cJSON
 )
 

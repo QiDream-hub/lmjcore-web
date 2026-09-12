@@ -227,7 +227,7 @@ lmjcore-web/
 ├── lmjcore.conf            # 示例配置文件
 └── thirdparty/             # 第三方依赖
     ├── LMJCore/
-    ├── URLRouter/
+    ├── URLRouter/         # URL 路由库（Stride 为其子模块，提供序列执行引擎）
     └── cJSON/
 ```
 

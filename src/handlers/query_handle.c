@@ -166,11 +166,7 @@ int handle_obj_query(void *params, void *cbdata) {
   }
   lmjcore_free_path_parse_result(start_ptr, segments, segment_count);
 
-  const char *type_str = (current_type == VALUE_TYPE_RAW)    ? "raw"
-                         : (current_type == VALUE_TYPE_REF)  ? "ref"
-                         : (current_type == VALUE_TYPE_SET)  ? "set"
-                         : (current_type == VALUE_TYPE_NULL) ? "null"
-                                                             : "unknown";
+  const char *type_str = value_type_to_string(current_type);
 
   // 构建响应
   char json_buf[4096];

@@ -157,6 +157,14 @@ int lmjcore_decode_value(const uint8_t *data, size_t data_len, char **out_str,
                          api_value_type_t *out_type);
 
 /**
+ * @brief 将 API 值类型转换为字符串表示
+ *
+ * @param type API 值类型
+ * @return const char* 类型字符串（静态常量，无需释放）
+ */
+const char *value_type_to_string(api_value_type_t type);
+
+/**
  * @brief 释放路径解析结果
  */
 void lmjcore_free_path_parse_result(char *start_ptr, char **segments,

@@ -169,6 +169,25 @@ int lmjcore_encode_value(const char *value_str, size_t value_len,
   return LMJCORE_SUCCESS;
 }
 
+// ==================== 值编解码工具 ====================
+
+const char *value_type_to_string(api_value_type_t type) {
+  switch (type) {
+  case VALUE_TYPE_RAW:
+    return "raw";
+  case VALUE_TYPE_REF:
+    return "ref";
+  case VALUE_TYPE_SET:
+    return "set";
+  case VALUE_TYPE_OBJECT:
+    return "object";
+  case VALUE_TYPE_NULL:
+    return "null";
+  default:
+    return "unknown";
+  }
+}
+
 int lmjcore_decode_value(const uint8_t *data, size_t data_len, char **out_str,
                          api_value_type_t *out_type) {
   if (!data || !out_str || !out_type) {
@@ -199,8 +218,15 @@ int lmjcore_decode_value(const uint8_t *data, size_t data_len, char **out_str,
       return LMJCORE_ERROR_MEMORY_ALLOCATION_FAILED;
     }
     lmjcore_ptr_to_hex(data + 1, *out_str);
-    // 所有指针引用都返回 VALUE_TYPE_REF
-    *out_type = VALUE_TYPE_REF;
+    // 根据指针第 1 字节区分对象/集合
+    uint8_t ptr_type = data[1];
+    if (ptr_type == LMJCORE_OBJ) {
+      *out_type = VALUE_TYPE_OBJECT;
+    } else if (ptr_type == LMJCORE_SET) {
+      *out_type = VALUE_TYPE_SET;
+    } else {
+      *out_type = VALUE_TYPE_REF;
+    }
     return LMJCORE_SUCCESS;
 
   case LMJCORE_VALUE_TYPE_RAW: {

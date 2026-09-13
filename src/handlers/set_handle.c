@@ -175,11 +175,7 @@ int handle_set_get(void *params, void *cbdata) {
     lmjcore_decode_value((uint8_t *)element_value, desc->value_len, &value_str,
                          &value_type);
 
-    const char *type_str = (value_type == VALUE_TYPE_RAW)    ? "raw"
-                           : (value_type == VALUE_TYPE_REF)  ? "ref"
-                           : (value_type == VALUE_TYPE_SET)  ? "set"
-                           : (value_type == VALUE_TYPE_NULL) ? "null"
-                                                             : "unknown";
+    const char *type_str = value_type_to_string(value_type);
 
     // 计算所需空间（预留足够余量）
     size_t needed = strlen(value_str ? value_str : "") + 64;

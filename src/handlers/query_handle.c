@@ -3,8 +3,8 @@
 #include "error_response.h"
 #include "handle_utils.h"
 #include "lmjcore.h"
-#include "zlog.h"
 #include "router.h"
+#include "zlog.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,7 +20,6 @@ int handle_obj_query(void *params, void *cbdata) {
     RETURN_ERROR_INVALID_PARAM(response);
   }
 
-  // 获取 path 参数（路由模式：/$'obj'/$'query'/${}）
   // 参数 0: 路径字符串 (例如：01abc...friend.name)
   const char *path_str = route_params_get(hp->params, 0);
   if (!path_str) {
@@ -48,7 +47,7 @@ int handle_obj_query(void *params, void *cbdata) {
 
   // 检查是否已有事务（批量操作场景）
   lmjcore_txn *txn = NULL;
-  int auto_commit = 1;  // 是否自动提交事务
+  int auto_commit = 1; // 是否自动提交事务
 
   if (hp->txn && !hp->auto_manage_txn) {
     // 使用已有事务（批量操作场景）
@@ -154,8 +153,8 @@ int handle_obj_query(void *params, void *cbdata) {
       }
       lmjcore_free_path_parse_result(start_ptr, segments, segment_count);
       free(current_value);
-      build_error_response(HTTP_STATUS_BAD_REQUEST,
-                           "Invalid reference format", response);
+      build_error_response(HTTP_STATUS_BAD_REQUEST, "Invalid reference format",
+                           response);
       return -1;
     }
   }

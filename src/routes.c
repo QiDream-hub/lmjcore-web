@@ -12,15 +12,15 @@ int register_all_routes(router_t *router) {
   // ==================== 批量操作 ====================
 
   // GET /batch - 只读批量操作
-  if (router_register(router, HTTP_GET, "/$'batch'",
-                      handle_batch_get, NULL) != 0) {
+  if (router_register(router, HTTP_GET, "/$'batch'", handle_batch_get, NULL) !=
+      0) {
     dzlog_error("Failed to register GET /batch");
     return -1;
   }
 
   // POST /batch - 写操作批量操作
-  if (router_register(router, HTTP_POST, "/$'batch'",
-                      handle_batch_post, NULL) != 0) {
+  if (router_register(router, HTTP_POST, "/$'batch'", handle_batch_post,
+                      NULL) != 0) {
     dzlog_error("Failed to register POST /batch");
     return -1;
   }
@@ -34,8 +34,8 @@ int register_all_routes(router_t *router) {
   }
 
   // POST /obj/init - 创建对象并填充成员（同一事务，原子操作）
-  if (router_register(router, HTTP_POST, "/$'obj'/$'init'",
-                      handle_obj_init, NULL) != 0) {
+  if (router_register(router, HTTP_POST, "/$'obj'/$'init'", handle_obj_init,
+                      NULL) != 0) {
     dzlog_error("Failed to register POST /obj/init");
     return -1;
   }
@@ -64,15 +64,15 @@ int register_all_routes(router_t *router) {
     return -1;
   }
 
-  if (router_register(router, HTTP_DELETE, "/$'obj'/${}",
-                      handle_obj_del, NULL) != 0) {
+  if (router_register(router, HTTP_DELETE, "/$'obj'/${}", handle_obj_del,
+                      NULL) != 0) {
     dzlog_error("Failed to register DELETE /obj/{ptr}");
     return -1;
   }
 
-  if (router_register(router, HTTP_GET, "/$'obj'/$'query'/${}",
+  if (router_register(router, HTTP_GET, "/$'obj'/$'query?path='${}",
                       handle_obj_query, NULL) != 0) {
-    dzlog_error("Failed to register GET /obj/query");
+    dzlog_error("Failed to register GET /obj/query?path=...");
     return -1;
   }
 
@@ -85,8 +85,8 @@ int register_all_routes(router_t *router) {
   }
 
   // POST /set/init - 创建集合并填充元素（同一事务，原子操作）
-  if (router_register(router, HTTP_POST, "/$'set'/$'init'",
-                      handle_set_init, NULL) != 0) {
+  if (router_register(router, HTTP_POST, "/$'set'/$'init'", handle_set_init,
+                      NULL) != 0) {
     dzlog_error("Failed to register POST /set/init");
     return -1;
   }
@@ -109,8 +109,8 @@ int register_all_routes(router_t *router) {
     return -1;
   }
 
-  if (router_register(router, HTTP_DELETE, "/$'set'/${}",
-                      handle_set_del, NULL) != 0) {
+  if (router_register(router, HTTP_DELETE, "/$'set'/${}", handle_set_del,
+                      NULL) != 0) {
     dzlog_error("Failed to register DELETE /set/{ptr}");
     return -1;
   }
@@ -139,7 +139,7 @@ int register_all_routes(router_t *router) {
   dzlog_info("  PUT    /obj/{ptr}/{member}");
   dzlog_info("  DELETE /obj/{ptr}/{member}");
   dzlog_info("  DELETE /obj/{ptr}");
-  dzlog_info("  GET    /obj/query");
+  dzlog_info("  GET    /obj/query/{path}");
   dzlog_info("  POST   /set");
   dzlog_info("  POST   /set/init");
   dzlog_info("  GET    /set/{ptr}");

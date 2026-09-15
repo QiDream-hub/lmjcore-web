@@ -1,9 +1,9 @@
 #include "http_server.h"
 #include "handle_utils.h"
-#include "lmjcore_handle.h"
-#include "zlog.h"
 #include "lmjcore.h"
+#include "lmjcore_handle.h"
 #include "routes.h"
+#include "zlog.h"
 #include <errno.h>
 #include <pthread.h>
 #include <signal.h>
@@ -167,8 +167,7 @@ static THREAD_RETURN_TYPE handle_connection_thread(void *arg) {
           response.status_code = 204;
           response.body = NULL;
           response.body_len = 0;
-        }
-        else if (server->router) {
+        } else if (server->router) {
           route_node_t *node =
               router_match(server->router, request->method, request->url);
           route_callback_t handler = router_get_callback(node);
@@ -177,20 +176,22 @@ static THREAD_RETURN_TYPE handle_connection_thread(void *arg) {
             route_params_t params = {0};
             route_param_t param_storage[16];
             size_t param_count = 0;
-            if (router_extract(node, request->url, param_storage, 16, &param_count) == 0) {
+            if (router_extract(node, request->url, param_storage, 16,
+                               &param_count) == 0) {
               params.params = param_storage;
               params.count = param_count;
             }
 
-            handle_params_t h_params = {.params = &params,
-                                        .env = server->env,
-                                        .txn = NULL,              // 默认无外部事务
-                                        .router = server->router, // 传递路由器
-                                        .body = request->body,
-                                        .body_len = request->body_len,
-                                        .txn_timeout = server->config.txn_timeout,
-                                        .txn_start_time = lmjcore_txn_get_start_time(),
-                                        .auto_manage_txn = true};  // 默认自动管理事务
+            handle_params_t h_params = {
+                .params = &params,
+                .env = server->env,
+                .txn = NULL,              // 默认无外部事务
+                .router = server->router, // 传递路由器
+                .body = request->body,
+                .body_len = request->body_len,
+                .txn_timeout = server->config.txn_timeout,
+                .txn_start_time = lmjcore_txn_get_start_time(),
+                .auto_manage_txn = true}; // 默认自动管理事务
 
             int handler_result = handler(&h_params, &response);
 
@@ -294,7 +295,8 @@ int http_server_init(http_server_t *server, const server_config_t *config) {
                           server->config.env_flags, server->config.fn, NULL,
                           &server->env);
     if (rc != 0) {
-      dzlog_error("Failed to create LMDB environment at %s", server->config.db_path);
+      dzlog_error("Failed to create LMDB environment at %s",
+                  server->config.db_path);
       free(server->config.host);
       return -1;
     }
@@ -368,9 +370,9 @@ int http_server_start(http_server_t *server) {
   }
 
   dzlog_info("LMJCore HTTP Server started on %s:%d", server->config.host,
-           server->config.port);
+             server->config.port);
   dzlog_info("Database path: %s",
-           server->config.db_path ? server->config.db_path : "(none)");
+             server->config.db_path ? server->config.db_path : "(none)");
   dzlog_info("Press Ctrl+C to stop");
 
   // 设置运行标志

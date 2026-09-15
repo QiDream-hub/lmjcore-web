@@ -42,6 +42,63 @@
 
 ---
 
+## 核心概念
+
+### 指针（Pointer）
+
+LMJCore 使用 **17 字节全局唯一指针** 标识所有实体：
+
+- **格式**: 34 位十六进制字符串
+- **类型前缀**:
+  - `01` = 对象 (LMJCORE_OBJ)
+  - `02` = 集合 (LMJCORE_SET)
+- **示例**: `01abc123def456789012345678901234`
+
+### 对象 vs 集合
+
+| 维度 | 对象 | 集合 |
+|------|------|------|
+| **用途** | 键值对容器 | 无序元素容器 |
+| **指针前缀** | `01` | `02` |
+| **存储** | 成员名在 `set` 库，值在 `main` 库 | 元素在 `set` 库 |
+| **访问** | 通过成员名点查 | 遍历或判断存在性 |
+| **典型场景** | 配置、用户信息、文档 | 标签、权限组、唯一值列表 |
+
+### 存储模型
+
+LMJCore 使用两个 LMDB 数据库协同工作：
+
+| 空间 | 名称 | 用途 | 关键特性 |
+|------|------|------|----------|
+| **集合区** | `set` | 存储实体的关联项集合（成员名或元素） | 启用 `MDB_DUPSORT`，按字典序自动排序，**不保留插入顺序** |
+| **主存储区** | `main` | 存储具体值 | Key = `[17B 实体指针][成员名]`，点查 O(1) |
+
+### 实体存在性规则
+
+**核心原则**: **实体的存在性由 `set` 库定义**。
+
+| 状态 | 判定条件 |
+|------|----------|
+| **有效实体** | `set` 中存在以其指针为 Key、且至少有一个 value 的条目 |
+| **空实体（不存在）** | `set` 中无对应 Key：刚创建尚未写入成员/元素，或成员/元素已被全部删除 |
+
+> ⚠️ **重要**: 由于 `set` 基于 LMDB 的重复键（`MDB_DUPSORT`）实现，**不允许空键**。当删除实体的最后一个成员/元素时，该键会被 LMDB 自动删除，实体随之消失。
+
+### 集合的无序性
+
+LMJCore 中的集合是**无序集合**，具有以下特性：
+
+| 特性 | 说明 |
+|------|------|
+| **无序性** | 不保留插入顺序，按字典序自动排序 |
+| **唯一性** | 同一元素在集合中只能出现一次 |
+| **高效查找** | 可快速判断元素是否存在 |
+| **集合运算** | 天然支持并集、交集等操作（基于排序） |
+
+> 💡 **如果需要有序列表**: 在元素值中编码顺序信息（如前 4 字节为小端序下标）。
+
+---
+
 ## 批量操作 API
 
 批量操作 API 通过 HTTP 方法区分事务类型：
@@ -280,6 +337,7 @@ Content-Type: application/json
 - 创建一个空对象
 - 返回对象的指针字符串（34 位十六进制）
 - 指针前缀 `01` 表示对象类型
+- **空对象不存在**: 刚创建的对象在 `set` 库中没有条目，`entity_exist` 返回 0
 
 ---
 
@@ -538,12 +596,12 @@ Content-Type: application/json
 | `error` | string | 失败原因（在前）与逐层失败位置（在后，如 `(in member 'x') (in element [0])`） |
 
 **说明**
-- **原子性**：创建对象、全部成员填充与所有嵌套子实体创建在**同一个事务**内完成
+- **原子性**: 创建对象、全部成员填充与所有嵌套子实体创建在**同一个事务**内完成
   - 任一环节失败（成员名超长、嵌套过深、事务超时等）→ 事务整体**回滚**，不留下任何对象/集合
   - 成功后指针才对外可见，可直接用于 `GET /obj/{ptr}`；嵌套对象/集合可通过其 `ref` 值继续 `GET`
-- **返回指针**：成功响应中的 `ptr` 即新对象指针（前缀 `01`），`member_count` 为根对象实际写入的成员数量
-- **事务复用**：当通过 `POST /batch` 的共享事务调用时，本接口不自行提交/回滚，交由批量事务统一处理
-- **版本变更（1.3.0）**：请求体由 `{"members":{...}}` 改为直接的对象映射；成员值类型由"仅字符串/null"扩展为任意 JSON（对象/数组自动嵌套创建）
+- **返回指针**: 成功响应中的 `ptr` 即新对象指针（前缀 `01`），`member_count` 为根对象实际写入的成员数量
+- **事务复用**: 当通过 `POST /batch` 的共享事务调用时，本接口不自行提交/回滚，交由批量事务统一处理
+- **版本变更（1.3.0）**: 请求体由 `{"members":{...}}` 改为直接的对象映射；成员值类型由"仅字符串/null"扩展为任意 JSON（对象/数组自动嵌套创建）
 
 ---
 
@@ -663,6 +721,7 @@ Content-Type: application/json
 **说明**
 - 创建一个空集合
 - 指针前缀 `02` 表示集合类型
+- **空集合不存在**: 刚创建的集合在 `set` 库中没有条目，`entity_exist` 返回 0
 
 ---
 
@@ -704,7 +763,7 @@ Content-Type: application/json
 ```
 
 **说明**
-- 集合是无序的，不保证元素插入顺序
+- 集合是无序的，不保证插入顺序
 - 支持指针引用作为元素
 
 ---
@@ -913,18 +972,18 @@ Content-Type: application/json
 | `error` | string | 失败原因（在前）与逐层失败位置（在后） |
 
 **说明**
-- **原子性**：创建集合、全部元素添加与所有嵌套子实体创建在**同一个事务**内完成
+- **原子性**: 创建集合、全部元素添加与所有嵌套子实体创建在**同一个事务**内完成
   - 任一环节失败（元素超长、嵌套过深、事务超时等）→ 事务整体**回滚**，不留下任何集合/对象
   - 成功后指针才对外可见，可直接用于 `GET /set/{ptr}`；嵌套对象/集合可通过其 `ref` 值继续 `GET`
-- **返回指针**：成功响应中的 `ptr` 即新集合指针（前缀 `02`），`element_count` 为该集合实际包含的去重后元素数量
-- **事务复用**：当通过 `POST /batch` 的共享事务调用时，本接口不自行提交/回滚，交由批量事务统一处理
-- **版本变更（1.3.0）**：请求体由 `{"elements":[...]}` 改为直接的 JSON 数组；元素值类型由"仅字符串/null"扩展为任意 JSON（对象/数组自动嵌套创建）
+- **返回指针**: 成功响应中的 `ptr` 即新集合指针（前缀 `02`），`element_count` 为该集合实际包含的去重后元素数量
+- **事务复用**: 当通过 `POST /batch` 的共享事务调用时，本接口不自行提交/回滚，交由批量事务统一处理
+- **版本变更（1.3.0）**: 请求体由 `{"elements":[...]}` 改为直接的 JSON 数组；元素值类型由"仅字符串/null"扩展为任意 JSON（对象/数组自动嵌套创建）
 
 ---
 
 ## 工具接口 API
 
-### 16. 检查指针是否存在
+### 15. 检查指针是否存在
 
 **请求**
 ```http
@@ -963,9 +1022,13 @@ Content-Type: application/json
 | `object` | 对象类型（指针前缀 `01`） |
 | `set` | 集合类型（指针前缀 `02`） |
 
+**说明**
+- 存在性由 `set` 库定义：只有当 `set` 中存在以其指针为 Key 且至少有一个 value 的条目时，实体才存在
+- 刚创建的空对象/空集合返回 `exist: false`
+
 ---
 
-### 17. 健康检查
+### 16. 健康检查
 
 **请求**
 ```http
@@ -998,179 +1061,68 @@ Content-Type: application/json
 | 状态码 | 说明 |
 |--------|------|
 | 200 | 成功 |
-| 201 | Created（创建成功） |
-| 400 | Bad Request（请求参数错误） |
-| 404 | Not Found（资源不存在） |
-| 405 | Method Not Allowed（方法不允许） |
-| 408 | Request Timeout（事务超时） |
-| 409 | Conflict（元素已存在） |
-| 500 | Internal Server Error（服务器错误） |
+| 201 | 创建成功 |
+| 400 | 参数错误 |
+| 404 | 实体不存在 |
+| 405 | 方法不允许 |
+| 408 | 事务超时 |
+| 409 | 元素已存在 |
+| 500 | 服务器错误 |
 
-### 错误响应格式
+### LMJCore 错误码
 
-```json
-{
-  "error": "错误描述信息"
-}
-```
-
-### 常见错误
-
-| 错误信息 | HTTP 状态码 | 说明 |
-|----------|-------------|------|
-| `Invalid parameters` | 400 | 参数无效 |
-| `Missing ptr parameter` | 400 | 缺少 ptr 参数 |
-| `Invalid pointer format` | 400 | 指针格式无效 |
-| `Object not found` | 404 | 对象不存在 |
-| `Set not found` | 404 | 集合不存在 |
-| `Member not found` | 404 | 成员不存在 |
-| `Failed to allocate memory` | 500 | 内存分配失败 |
-| `Failed to begin transaction` | 500 | 事务开启失败 |
-| `Failed to commit transaction` | 500 | 事务提交失败 |
+| 错误码 | 值 | HTTP 映射 | 说明 |
+|--------|-----|----------|------|
+| `LMJCORE_SUCCESS` | 0 | 200 | 成功 |
+| `LMJCORE_ERROR_ENTITY_NOT_FOUND` | -32001 | 404 | 实体不存在 |
+| `LMJCORE_ERROR_MEMBER_NOT_FOUND` | -32002 | 404 | 成员不存在 |
+| `LMJCORE_ERROR_INVALID_PARAM` | -32003 | 400 | 参数无效 |
+| `LMJCORE_ERROR_PATH_PARSE` | -32121 | 400 | 路径解析错误 |
+| `LMJCORE_ERROR_SET_NOT_SUPPORTED` | -32141 | 400 | 集合不支持链式解析 |
+| `LMJCORE_ERROR_TXN_TIMEOUT` | -32101 | 408 | 事务超时 |
+| `LMJCORE_ERROR_READONLY_TXN` | -32020 | 405 | 方法不允许 |
+| `LMJCORE_ERROR_MEMORY_ALLOCATION` | -32030 | 500 | 内存分配失败 |
 
 ---
 
-## 使用示例
+## 附录：存储模型详解
 
-### cURL 示例
+### set 库（集合区）
 
-```bash
-# 1. 创建对象
-curl -X POST http://localhost:8080/obj
+| 属性 | 说明 |
+|------|------|
+| **用途** | 存储实体的关联项集合（对象的成员名列表、集合的元素列表） |
+| **Key** | 实体指针（17 字节） |
+| **Value** | 成员名（对象）或元素值（集合） |
+| **特性** | 启用 `MDB_DUPSORT`，允许重复 Key，按 Value 字典序自动排序 |
+| **空键行为** | 不允许空键：删除最后一个 value 时，Key 被 LMDB 自动删除 |
 
-# 2. 设置成员值
-curl -X PUT http://localhost:8080/obj/01abc123.../name \
-  -H "Content-Type: application/json" \
-  -d '{"value":"Alice"}'
+### main 库（主存储区）
 
-# 3. 获取成员值
-curl http://localhost:8080/obj/01abc123.../name
+| 属性 | 说明 |
+|------|------|
+| **用途** | 存储对象成员的具体值 |
+| **Key** | `[17B 实体指针][成员名]` |
+| **Value** | 二进制原始数据或指针引用 |
+| **Key 限制** | ≤ 511 字节 → 成员名最大 493 字节 |
 
-# 4. 链式查询
-curl "http://localhost:8080/obj/query?path=01abc123...user.profile.name"
+### 值存储格式
 
-# 5. 创建集合
-curl -X POST http://localhost:8080/set
+所有值统一添加 1 字节类型标记：
 
-# 6. 添加元素到集合
-curl -X POST http://localhost:8080/set/02def456.../elements \
-  -H "Content-Type: application/json" \
-  -d '{"value":"apple"}'
-
-# 7. 获取完整集合
-curl http://localhost:8080/set/02def456...
-
-# 8. 检查指针是否存在
-curl http://localhost:8080/ptr/01abc123.../exist
-
-# 9. 健康检查
-curl http://localhost:8080/health
-
-# 10. 删除对象
-curl -X DELETE http://localhost:8080/obj/01abc123...
-
-# 11. 删除集合
-curl -X DELETE http://localhost:8080/set/02def456...
-
-# 12. 批量操作
-curl -X POST http://localhost:8080/batch \
-  -H "Content-Type: application/json" \
-  -d '{
-    "operations": [
-      {"method": "PUT", "path": "/obj/01abc.../name", "body": {"value": "Alice"}},
-      {"method": "GET", "path": "/obj/01abc..."}
-    ]
-  }'
 ```
-
-### JavaScript 示例
-
-```javascript
-// 创建对象
-const createObject = async () => {
-  const response = await fetch('http://localhost:8080/obj', {
-    method: 'POST'
-  });
-  const data = await response.json();
-  console.log('Created object:', data.ptr);
-  return data.ptr;
-};
-
-// 设置成员值
-const setMember = async (ptr, member, value) => {
-  const response = await fetch(`http://localhost:8080/obj/${ptr}/${member}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ value })
-  });
-  return await response.json();
-};
-
-// 获取成员值
-const getMember = async (ptr, member) => {
-  const response = await fetch(`http://localhost:8080/obj/${ptr}/${member}`);
-  return await response.json();
-};
-
-// 链式查询
-const queryPath = async (path) => {
-  const response = await fetch(`http://localhost:8080/obj/query?path=${encodeURIComponent(path)}`);
-  return await response.json();
-};
-
-// 批量操作（只读）
-const batchGet = async (operations) => {
-  const response = await fetch('http://localhost:8080/batch', {
-    method: 'GET',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ operations })
-  });
-  return await response.json();
-};
-
-// 批量操作（写事务）
-const batchPost = async (operations) => {
-  const response = await fetch('http://localhost:8080/batch', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ operations })
-  });
-  return await response.json();
-};
-
-// 使用示例
-(async () => {
-  const ptr = await createObject();
-  await setMember(ptr, 'name', 'Alice');
-  const member = await getMember(ptr, 'name');
-  console.log('Member value:', member.value);
-
-  const result = await queryPath(`${ptr}.name`);
-  console.log('Query result:', result);
-
-  // 批量操作示例（写事务）
-  const batchResult = await batchPost([
-    { method: 'PUT', path: `/obj/${ptr}/age`, body: { value: '25' } },
-    { method: 'GET', path: `/obj/${ptr}` }
-  ]);
-  console.log('Batch result:', batchResult);
-
-  // 只读批量查询示例
-  const readonlyResult = await batchGet([
-    { method: 'GET', path: `/obj/${ptr}` },
-    { method: 'GET', path: `/obj/${ptr}/name` }
-  ]);
-  console.log('Readonly batch result:', readonlyResult);
-})();
+┌──────────────────────────────────────────┐
+│ 原始数据：  [0x00][data...]              │
+│ 指针引用：  [0x01][17B 指针]             │
+│ 空值：      [0x02]                       │
+└──────────────────────────────────────────┘
 ```
 
 ---
 
-## 版本历史
+## 参考文档
 
-| 版本 | 日期 | 变更 |
-|------|------|------|
-| 1.0.0 | 2024-01-01 | 初始版本 |
-| 1.1.0 | 2026-05-17 | 添加批量操作 API (`POST /batch`) |
-| 1.2.0 | 2026-05-20 | 拆分批量操作 API：`GET /batch`（只读）、`POST /batch`（写事务） |
-| 1.3.0 | 2026-09-03 | 新增 `POST /obj/init`、`POST /set/init`（单事务创建+填充）；支持任意 JSON 嵌套创建（对象→obj、数组→set） |
+- [LMJCore 概念指南](../../thirdparty/LMJCore/doc/core/LMJCore 概念指南.md)
+- [LMJCore 核心存储模型](../../thirdparty/LMJCore/doc/core/LMJCore 核心存储模型.md)
+- [LMJCore 核心设计定义](../../thirdparty/LMJCore/doc/core/LMJCore 核心设计定义.md)
+- [LMJCore 事务模型](../../thirdparty/LMJCore/doc/core/LMJCore 事务模型.md)

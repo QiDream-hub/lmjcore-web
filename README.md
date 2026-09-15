@@ -79,6 +79,17 @@ log_level = 1
 
 ## 📖 API 概览
 
+### 核心概念
+
+**LMJCore** 使用两个 LMDB 数据库存储数据：
+
+| 空间 | 名称 | 用途 | 关键特性 |
+|------|------|------|----------|
+| **集合区** | `set` | 存储实体的关联项集合（成员名或元素） | 启用 `MDB_DUPSORT`，按字典序自动排序，**不保留插入顺序** |
+| **主存储区** | `main` | 存储具体值 | Key = `[17B 实体指针][成员名]`，点查 O(1) |
+
+**实体存在性规则**：实体的存在性由 `set` 库定义。删除最后一个成员/元素会导致实体被 LMDB 自动删除。
+
 ### 对象操作
 
 | 方法 | 端点 | 说明 |
@@ -103,7 +114,7 @@ log_level = 1
 | `POST` | `/set/{ptr}/elements` | 添加元素 |
 | `DELETE` | `/set/{ptr}/elements` | 删除元素 |
 
-> **⚠️ 注意**：删除集合的**最后一个元素**会导致集合本身被删除（继承自 LMDB 的空键自动删除行为）。详见 [API 参考文档](doc/lmjcore-web/API_REFERENCE.md#10-删除元素)
+> **⚠️ 注意**：集合是**无序**的，不保留插入顺序，自动去重并按字典序排序。删除集合的**最后一个元素**会导致集合本身被删除（继承自 LMDB 的空键自动删除行为）。详见 [API 参考文档](doc/lmjcore-web/API_REFERENCE.md#10-删除元素)
 
 ### 工具接口
 
@@ -186,7 +197,8 @@ curl -X POST http://localhost:8080/set/init \
 | **事务管理** | 请求级自动事务，超时控制 |
 | **链式查询** | 支持嵌套路径解析 |
 | **自动类型识别** | 智能识别指针/原始数据/空值 |
-| **高性能** | 基于 LMDB 存储引擎 |
+| **高性能** | 基于 LMDB 存储引擎 + llhttp HTTP 解析 |
+| **集合语义** | 无序集合，自动去重，字典序排序 |
 
 ---
 
@@ -279,8 +291,17 @@ RETURN_ERROR_NO_MEMORY(response);
 
 ## 📚 文档
 
-- [详细设计文档](doc/lmjcore-web/README.md) - 架构设计和技术细节
+### 项目文档
+
+- [详细设计文档](doc/lmjcore-web/lmjcore_web.md) - 架构设计和技术细节
 - [API 参考文档](doc/lmjcore-web/API_REFERENCE.md) - 完整 API 文档
+
+### LMJCore 核心文档
+
+- [LMJCore 概念指南](thirdparty/LMJCore/doc/core/LMJCore 概念指南.md) - 核心思想和设计理念
+- [LMJCore 核心存储模型](thirdparty/LMJCore/doc/core/LMJCore 核心存储模型.md) - set 和 main 数据库详解
+- [LMJCore 核心设计定义](thirdparty/LMJCore/doc/core/LMJCore 核心设计定义.md) - 数据格式与行为契约
+- [LMJCore 事务模型](thirdparty/LMJCore/doc/core/LMJCore 事务模型.md) - MVCC 与 ACID 语义
 
 ---
 

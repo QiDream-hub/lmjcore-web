@@ -139,7 +139,7 @@ int register_all_routes(router_t *router) {
   dzlog_info("  PUT    /obj/{ptr}/{member}");
   dzlog_info("  DELETE /obj/{ptr}/{member}");
   dzlog_info("  DELETE /obj/{ptr}");
-  dzlog_info("  GET    /obj/query/{path}");
+  dzlog_info("  GET    /obj/query?patch={path}");
   dzlog_info("  POST   /set");
   dzlog_info("  POST   /set/init");
   dzlog_info("  GET    /set/{ptr}");

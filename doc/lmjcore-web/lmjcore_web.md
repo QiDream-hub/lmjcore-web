@@ -20,7 +20,7 @@
 |------|------|
 | **RESTful API** | 提供标准的 REST 风格接口 |
 | **事务管理** | 请求级自动事务，支持超时控制 |
-| **链式查询** | 支持嵌套路径解析查询 |
+| **链式查询** | 深度访问嵌套路径（配合批量接口做多路径整合） |
 | **自动类型识别** | 智能识别指针引用、原始数据、空值 |
 | **集合支持** | 支持无序集合的 CRUD 操作 |
 | **高性能 HTTP 解析** | 基于 llhttp 实现，100% RFC 7230 兼容 |
@@ -178,7 +178,8 @@ include/
 | `json_get_string` | 从 JSON 对象中提取字符串值 |
 | `lmjcore_ptr_from_hex` | 十六进制字符串 → 二进制指针 |
 | `lmjcore_ptr_to_hex` | 二进制指针 → 十六进制字符串 |
-| `lmjcore_parse_query_path` | 解析链式查询路径 |
+| `lmjcore_obj_member_get_capped` | 读取成员值（按需增长，受上限约束） |
+| `value_type_to_string` | API 值类型 → 类型字符串 |
 | `lmjcore_encode_value` | 编码值为存储格式 |
 | `lmjcore_decode_value` | 解码存储格式的值 |
 
@@ -296,6 +297,14 @@ GET /set/02def456...  // → 404 Not Found
 示例：01abc123.user.profile.name
 URL:  GET /obj/query?path=01abc123.user.profile.name
 ```
+
+说明：
+
+- 这是**深度访问**（一条路径 → 一个叶子值），多路径组合由 `GET /batch` 承担；
+- 成员名中的字面 `.` 写作 `%2E`（先按 `.` 切分，再逐段 URL 解码）；
+- 根段必须是对象指针（`01`）；集合不支持成员访问；
+- 上限：`query_max_depth`（默认 64）、`max_value_bytes`（默认 8192，超限 413）；
+- 详见 `doc/lmjcore-web/QUERY_DESIGN.md`。
 
 ---
 
@@ -685,7 +694,7 @@ log_level = 1  # 在 lmjcore.conf 中
 |------|------|------|
 | 对象 CRUD | ✅ 已完成 | 创建、读取、更新、删除对象 |
 | 集合 CRUD | ✅ 已完成 | 创建、读取、添加/删除元素 |
-| 链式查询 | ✅ 已完成 | 通过 `/obj/query?path=` 实现嵌套路径解析 |
+| 链式查询 | ✅ 已完成 | `/obj/query?path=` 深度访问（只读、单值、O(深度)），多路径由 `/batch` 整合 |
 | 批量操作 | ✅ 已完成 | 单事务内执行多个操作，支持只读模式 |
 | 健康检查 | ✅ 已完成 | `/health` 端点 |
 | 指针验证 | ✅ 已完成 | `/ptr/{ptr}/exist` 端点 |

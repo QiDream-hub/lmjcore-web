@@ -18,6 +18,7 @@
 #define LMJCORE_ERROR_PATH_TOO_DEEP      -32122  // 路径深度超限
 #define LMJCORE_ERROR_PATH_INVALID_PTR   -32123  // 无效的起始指针
 #define LMJCORE_ERROR_PATH_URL_DECODE    -32124  // URL 解码失败
+#define LMJCORE_ERROR_VALUE_TOO_LARGE   -32125  // 返回值超出大小上限（查询/成员读取）
 
 // 类型相关 (-32140 ~ -32159)
 #define LMJCORE_ERROR_SET_NOT_SUPPORTED  -32141  // 集合不支持链式解析
@@ -49,6 +50,7 @@
 #define HTTP_STATUS_METHOD_NOT_ALLOWED 405
 #define HTTP_STATUS_REQUEST_TIMEOUT 408
 #define HTTP_STATUS_CONFLICT 409
+#define HTTP_STATUS_PAYLOAD_TOO_LARGE 413
 #define HTTP_STATUS_NOT_IMPLEMENTED 501
 #define HTTP_STATUS_INTERNAL_SERVER_ERROR 500
 
@@ -65,6 +67,7 @@ static inline int lmjcore_error_to_http_status(int error_code) {
         
         case LMJCORE_ERROR_ENTITY_NOT_FOUND:
         case LMJCORE_ERROR_MEMBER_NOT_FOUND:
+        case LMJCORE_ERROR_MEMBER_MISSING:
             return HTTP_STATUS_NOT_FOUND;
         
         case LMJCORE_ERROR_INVALID_PARAM:
@@ -76,6 +79,10 @@ static inline int lmjcore_error_to_http_status(int error_code) {
         case LMJCORE_ERROR_MEMBER_TOO_LONG:
         case LMJCORE_ERROR_SET_NOT_SUPPORTED:
         case LMJCORE_ERROR_INVALID_TYPE:
+        case LMJCORE_ERROR_ENTITY_TYPE_MISMATCH:
+        case LMJCORE_ERROR_TYPE_MISMATCH:
+        case LMJCORE_ERROR_PATH_TOO_DEEP:
+        case LMJCORE_ERROR_PATH_URL_DECODE:
             return HTTP_STATUS_BAD_REQUEST;
         
         case LMJCORE_ERROR_READONLY_TXN:
@@ -84,6 +91,9 @@ static inline int lmjcore_error_to_http_status(int error_code) {
         case LMJCORE_ERROR_TXN_TIMEOUT:
             return HTTP_STATUS_REQUEST_TIMEOUT;
         
+        case LMJCORE_ERROR_VALUE_TOO_LARGE:
+            return HTTP_STATUS_PAYLOAD_TOO_LARGE;
+
         case LMJCORE_ERROR_MEMORY_ALLOCATION_FAILED:
         case LMJCORE_ERROR_SERVER_INIT:
         case LMJCORE_ERROR_SERVER_START:

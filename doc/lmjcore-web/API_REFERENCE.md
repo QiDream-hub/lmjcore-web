@@ -644,21 +644,31 @@ Content-Type: application/json
 
 ---
 
-### 8. 链式查询
+### 8. 链式查询（深度访问）
 
 **请求**
 ```http
 GET /obj/query?path={path}
 ```
 
+**定位**：本接口只做**深度访问**——沿对象图走一条确定路径并返回**单个**叶子值。
+多路径的组合查询由 `GET /batch` 负责（一次请求内共享同一只读事务快照）。
+
 **查询参数**
 | 参数 | 类型 | 说明 |
 |------|------|------|
-| `path` | string | 查询路径（格式：`<指针>.<member1>.<member2>...`） |
+| `path` | string | 查询路径：`<34位指针>.<成员名>[.<成员名>...]` |
+
+**路径语法**
+- 根段必须是**对象**指针（`01` 前缀）；集合指针（`02`）返回 400
+- 成员名中的字面 `.` 写作 `%2E`，逐段 URL 解码（`file.txt`、`user.name` 可正常寻址）
+- 空段（`01ab..a`、`01ab.a.`）与缺少成员段（仅 `01ab`）都是语法错误
+- 成员段数上限由 `query_max_depth` 控制（默认 64）
 
 **示例**
 ```http
 GET /obj/query?path=01abc123.user.profile.name
+GET /obj/query?path=01abc123.a%2Eb        # 成员名为 "a.b"
 ```
 
 **成功响应**
@@ -673,29 +683,52 @@ Content-Type: application/json
 }
 ```
 
+| type | value 形态 | 说明 |
+|------|-----------|------|
+| `raw` | 原始文本 | 叶子为原始数据 |
+| `object` | 34 位指针（`01…`） | 叶子是对象引用（不自动解引用） |
+| `set` | 34 位指针（`02…`） | 叶子是集合引用 |
+| `null` | `"null"` | 空值 |
+
 **错误响应**
 ```http
 HTTP/1.1 404 Not Found
 Content-Type: application/json
 
 {
-  "error": "Member not found"
+  "error": "Member not found",
+  "at": "01abc123/user/profile",
+  "segment": 2
 }
 ```
 
-```http
-HTTP/1.1 400 Bad Request
-Content-Type: application/json
+| 场景 | 状态码 | error |
+|------|--------|-------|
+| 路径语法错误（空段 / 缺成员段） | 400 | `Invalid query path` |
+| 根段不是合法指针 | 400 | `Invalid pointer format` |
+| 根段或中间目标是集合 | 400 | `Set does not support member access` |
+| 中间值不是引用 | 400 | `Intermediate value is not a reference` |
+| 超过深度上限 | 400 | `Query path too deep` |
+| 中间对象为空实体 | 404 | `Object not found` |
+| 成员不存在（或已注册但无值） | 404 | `Member not found` |
+| 叶子值超过 `max_value_bytes` | 413 | `Value too large` |
+| 事务超时 | 408 | `Transaction timeout` |
 
-{
-  "error": "Intermediate value is not a reference"
-}
-```
+**错误定位字段**
+| 字段 | 说明 |
+|------|------|
+| `at` | 失败位置，形如 `<指针>/<段>/<段>`（仅在有明确位置时出现） |
+| `segment` | 失败段索引（`0` = 根指针段，`1` = 第一个成员段） |
+| `found` | 中间值不是引用时实际观测到的存储类型（`raw` / `null` / `set`） |
+| `limit` | 413 时生效的上限值 |
 
 **说明**
-- 支持多层嵌套路径
-- 中间值必须是指针引用（`ref` 类型）才能继续解析
-- 遇到集合类型返回错误
+- 每段一次精确成员读取，全程 O(深度)，不做任何成员枚举
+- 中间段用 18 字节探测（1 字节类型标记 + 17 字节指针）：核心层一旦返回缓冲区不足，
+  即可判定不是引用，无需读入大值
+- 只读事务；在 `GET /batch` 中复用共享事务，多条路径共享同一 MVCC 快照
+- 叶子值不再受固定 4096 缓冲限制，按需增长至 `max_value_bytes`（超限 413）
+- 详细设计见 `doc/lmjcore-web/QUERY_DESIGN.md`
 
 ---
 

@@ -1,5 +1,6 @@
 #include "http_server.h"
 #include "handle_utils.h"
+#include "json_response.h"
 #include "lmjcore.h"
 #include "lmjcore_handle.h"
 #include "routes.h"
@@ -194,7 +195,9 @@ static THREAD_RETURN_TYPE handle_connection_thread(void *arg) {
                 .body_len = request->body_len,
                 .txn_timeout = server->config.txn_timeout,
                 .txn_start_time = lmjcore_txn_get_start_time(),
-                .auto_manage_txn = true}; // 默认自动管理事务
+                .auto_manage_txn = true, // 默认自动管理事务
+                .query_max_depth = server->config.query_max_depth,
+                .max_value_bytes = server->config.max_value_bytes};
 
             int handler_result = handler(&h_params, &response);
 
@@ -237,14 +240,29 @@ static THREAD_RETURN_TYPE handle_connection_thread(void *arg) {
   int response_len =
       http_build_response(&response, response_buf, sizeof(response_buf));
 
-  if (response_len > 0) {
-    send_http_response(client_fd, response_buf, response_len);
+  if (response_len <= 0) {
+    // 响应体超出传输缓冲（或构建失败）：返回明确的 JSON 413，
+    // 而不是无 body 的 500 —— 否则调用方拿不到任何诊断信息
+    http_response_t oversize = {0};
+    json_response_error(&oversize, HTTP_STATUS_PAYLOAD_TOO_LARGE,
+                        "Response body too large (%zu bytes, limit %zu)",
+                        response.body_len, sizeof(response_buf));
+    response_len =
+        http_build_response(&oversize, response_buf, sizeof(response_buf));
+    if (response_len <= 0) {
+      const char *fallback = "HTTP/1.1 500 Internal Server Error\r\n"
+                             "Content-Length: 0\r\n"
+                             "Connection: close\r\n\r\n";
+      send_http_response(client_fd, fallback, strlen(fallback));
+    } else {
+      send_http_response(client_fd, response_buf, response_len);
+    }
+    dzlog_warn("Response too large: status=%d body_len=%zu limit=%zu",
+               response.status_code, response.body_len, sizeof(response_buf));
     LOG_REQUEST(method_str, url_str, response.status_code, client_ip);
+    http_free_response(&oversize);
   } else {
-    const char *fallback = "HTTP/1.1 500 Internal Server Error\r\n"
-                           "Content-Length: 0\r\n"
-                           "Connection: close\r\n\r\n";
-    send_http_response(client_fd, fallback, strlen(fallback));
+    send_http_response(client_fd, response_buf, response_len);
     LOG_REQUEST(method_str, url_str, response.status_code, client_ip);
   }
 
@@ -290,6 +308,14 @@ int http_server_init(http_server_t *server, const server_config_t *config) {
 
   if (server->config.max_connections <= 0) {
     server->config.max_connections = SERVER_DEFAULT_MAX_CONNECTIONS;
+  }
+
+  if (server->config.query_max_depth <= 0) {
+    server->config.query_max_depth = HANDLE_DEFAULT_QUERY_MAX_DEPTH;
+  }
+
+  if (server->config.max_value_bytes == 0) {
+    server->config.max_value_bytes = HANDLE_DEFAULT_MAX_VALUE_BYTES;
   }
 
   // 初始化 LMDB 环境

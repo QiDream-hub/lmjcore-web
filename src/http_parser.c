@@ -334,6 +334,8 @@ static const char *get_status_text(int status_code) {
   case 404: return "Not Found";
   case 405: return "Method Not Allowed";
   case 408: return "Request Timeout";
+  case 409: return "Conflict";
+  case 413: return "Payload Too Large";
   case 500: return "Internal Server Error";
   default:  return "Unknown";
   }

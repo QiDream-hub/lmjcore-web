@@ -257,6 +257,16 @@ cJSON *json_new_exist(bool exists, const char *type) {
   return root;
 }
 
+int json_response_value_too_large(http_response_t *response, size_t limit) {
+  cJSON *root = cJSON_CreateObject();
+  if (!root || !add_string(root, "error", "Value too large") ||
+      !add_number(root, "limit", (double)limit)) {
+    cJSON_Delete(root);
+    return oom_response(response);
+  }
+  return json_response_set(response, HTTP_STATUS_PAYLOAD_TOO_LARGE, root);
+}
+
 cJSON *json_new_health(const char *status, long uptime) {
   cJSON *root = cJSON_CreateObject();
   if (!root || !add_string(root, "status", status) ||

@@ -1,4 +1,5 @@
 #include "config.h"
+#include "handle_utils.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -89,6 +90,8 @@ void config_init(config_t *config) {
   config->map_size = CONFIG_DEFAULT_MAP_SIZE;
   config->max_connections = CONFIG_DEFAULT_MAX_CONNECTIONS;
   config->txn_timeout = CONFIG_DEFAULT_TXN_TIMEOUT;
+  config->query_max_depth = HANDLE_DEFAULT_QUERY_MAX_DEPTH;
+  config->max_value_bytes = HANDLE_DEFAULT_MAX_VALUE_BYTES;
   config->log_level = CONFIG_DEFAULT_LOG_LEVEL;
   strncpy(config->log_output, CONFIG_DEFAULT_LOG_OUTPUT, CONFIG_MAX_LOG_OUTPUT - 1);
 }
@@ -146,6 +149,12 @@ int config_load(config_t *config, const char *path) {
       config->max_connections = int_val;
     } else if (strcmp(key, "txn_timeout") == 0 && parse_int(value, &int_val) == 0) {
       config->txn_timeout = int_val;
+    } else if (strcmp(key, "query_max_depth") == 0 &&
+               parse_int(value, &int_val) == 0) {
+      config->query_max_depth = int_val;
+    } else if (strcmp(key, "max_value_bytes") == 0 &&
+               parse_size(value, &size_val) == 0) {
+      config->max_value_bytes = size_val;
     } else if (strcmp(key, "log_level") == 0 && parse_int(value, &int_val) == 0) {
       config->log_level = int_val;
     } else if (strcmp(key, "log_output") == 0) {
@@ -260,6 +269,8 @@ int config_to_server_config(config_t *config, server_config_t *server_config) {
   server_config->map_size = config->map_size;
   server_config->max_connections = config->max_connections;
   server_config->txn_timeout = config->txn_timeout;
+  server_config->query_max_depth = config->query_max_depth;
+  server_config->max_value_bytes = config->max_value_bytes;
   // env_flags 和 fn 由其他代码设置
 
   return 0;
@@ -276,6 +287,8 @@ void config_print(const config_t *config) {
   printf("  Map Size:       %zu bytes\n", config->map_size);
   printf("  Max Connections:%d\n", config->max_connections);
   printf("  Txn Timeout:    %d seconds\n", config->txn_timeout);
+  printf("  Query Max Depth:%d\n", config->query_max_depth);
+  printf("  Max Value Bytes:%zu\n", config->max_value_bytes);
   printf("  Log Level:      %d\n", config->log_level);
   printf("  Log Output:     %s\n", config->log_output);
 }

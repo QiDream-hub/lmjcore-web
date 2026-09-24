@@ -94,4 +94,13 @@ cJSON *json_new_exist(bool exists, const char *type);
 /** @brief {"status":"<status>","uptime":<uptime>} */
 cJSON *json_new_health(const char *status, long uptime);
 
+// ==================== 常用错误响应 ====================
+
+/**
+ * @brief 设置值超限响应 413 {"error":"Value too large","limit":N}
+ *
+ * 供成员读取与链式查询共用，避免各自拼装。
+ */
+int json_response_value_too_large(http_response_t *response, size_t limit);
+
 #endif // JSON_RESPONSE_H

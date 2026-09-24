@@ -20,6 +20,8 @@ typedef struct {
   unsigned int env_flags; // 环境标志（默认安全模式 0）
   int max_connections;    // 最大连接队列（默认 128）
   int txn_timeout;        // 事务超时时间（秒，默认 5 秒）
+  int query_max_depth;    // 链式查询深度上限（成员段数，默认 64）
+  size_t max_value_bytes; // 单个成员值/查询叶子值上限（字节，默认 8192）
 } server_config_t;
 
 // 默认配置

@@ -154,8 +154,9 @@ static int execute_operation(handle_params_t *hp, const cJSON *op_obj,
       .body_len = body_str ? strlen(body_str) : 0,
       .txn_timeout = hp->txn_timeout,
       .txn_start_time = hp->txn_start_time,
-      .auto_manage_txn = false // 批量操作中不自动管理事务
-  };
+      .auto_manage_txn = false, // 批量操作中不自动管理事务
+      .query_max_depth = hp->query_max_depth,
+      .max_value_bytes = hp->max_value_bytes};
 
   // 响应
   http_response_t response = {0};

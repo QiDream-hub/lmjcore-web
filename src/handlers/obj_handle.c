@@ -266,20 +266,13 @@ int handle_obj_member_get(void *params, void *cbdata) {
     RETURN_ERROR_NOT_FOUND("Object", response);
   }
 
-  // 分配缓冲区读取成员值
-  size_t value_buf_size = 4096;
-  uint8_t *value_buf = (uint8_t *)malloc(value_buf_size);
-  if (!value_buf) {
-    if (auto_commit) {
-      lmjcore_txn_abort(txn);
-    }
-    RETURN_ERROR_NO_MEMORY(response);
-  }
-
+  // 读取成员值：缓冲区按需增长，超过上限返回 413（不再固定 4096 截断）
+  uint8_t *value_buf = NULL;
   size_t value_len = 0;
-  int rc = lmjcore_obj_member_get(txn, obj_ptr, (const uint8_t *)member_name,
-                              strlen(member_name), value_buf, value_buf_size,
-                              &value_len);
+  int rc = lmjcore_obj_member_get_capped(txn, obj_ptr, member_name,
+                                         strlen(member_name),
+                                         hp->max_value_bytes, &value_buf,
+                                         &value_len);
 
   // 读事务完成，仅在自动管理时中止
   if (auto_commit) {
@@ -287,12 +280,17 @@ int handle_obj_member_get(void *params, void *cbdata) {
   }
 
   if (rc == LMJCORE_ERROR_MEMBER_NOT_FOUND) {
-    free(value_buf);
     RETURN_ERROR_MEMBER_NOT_FOUND(response);
   }
 
+  if (rc == LMJCORE_ERROR_VALUE_TOO_LARGE) {
+    size_t limit = hp->max_value_bytes ? hp->max_value_bytes
+                                       : (size_t)HANDLE_DEFAULT_MAX_VALUE_BYTES;
+    json_response_value_too_large(response, limit);
+    return -1;
+  }
+
   if (rc != LMJCORE_SUCCESS) {
-    free(value_buf);
     json_response_lmjcore_error(response, rc);
     return -1;
   }

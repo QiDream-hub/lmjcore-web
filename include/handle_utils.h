@@ -85,7 +85,16 @@ typedef struct {
   int txn_timeout;         // 事务超时时间（秒）
   time_t txn_start_time;   // 事务开始时间
   bool auto_manage_txn;    // 是否自动管理事务（默认 true，批量操作时设为 false）
+  int query_max_depth;     // 链式查询深度上限（成员段数，0 表示用默认值）
+  size_t max_value_bytes;  // 单个成员值/查询叶子值上限（字节，0 表示用默认值）
 } handle_params_t;
+
+// ==================== 取值/查询上限默认值（config.h 以此为单一来源） ====================
+
+/** 链式查询最大深度（成员段数，不含起始指针段） */
+#define HANDLE_DEFAULT_QUERY_MAX_DEPTH 64
+/** 单个成员值 / 查询叶子值的最大字节数 */
+#define HANDLE_DEFAULT_MAX_VALUE_BYTES 8192
 
 // ==================== 工具函数声明 ====================
 
@@ -117,20 +126,6 @@ int lmjcore_ptr_from_hex(const char *str, uint8_t *ptr_out);
 int lmjcore_ptr_to_hex(const uint8_t *ptr, char *str_out);
 
 /**
- * @brief 解析查询路径字符串
- *
- * 格式："01abc123.user.profile.name"
- *
- * @param path_str 路径字符串
- * @param start_ptr_out 输出起始指针（34 位十六进制字符串，需调用方释放）
- * @param segments_out 输出路径段数组（需调用方释放）
- * @param segment_count_out 输出路径段数量
- * @return int 错误码
- */
-int lmjcore_parse_query_path(const char *path_str, char **start_ptr_out,
-                             char ***segments_out, size_t *segment_count_out);
-
-/**
  * @brief 编码值为存储格式
  *
  * @param value_str 输入值字符串
@@ -143,6 +138,27 @@ int lmjcore_parse_query_path(const char *path_str, char **start_ptr_out,
 int lmjcore_encode_value(const char *value_str, size_t value_len,
                          uint8_t *out_buf, size_t out_buf_size,
                          size_t *out_len);
+
+/**
+ * @brief 读取成员值，缓冲区按需增长，不超过上限
+ *
+ * 用于替代"固定 4096 字节缓冲"的读法：核心层在缓冲不足时既不拷贝也不回传
+ * 所需长度，因此这里以倍增方式重试，直到读成功或达到 max_bytes。
+ *
+ * @param txn 有效事务句柄
+ * @param obj_ptr 目标对象指针
+ * @param member_name 成员名（二进制安全）
+ * @param member_name_len 成员名长度
+ * @param max_bytes 值上限（0 表示使用 HANDLE_DEFAULT_MAX_VALUE_BYTES）
+ * @param out_buf 输出：malloc 的缓冲区（调用方释放；失败时不设置）
+ * @param out_len 输出：实际值长度
+ * @return int 错误码
+ *   - LMJCORE_ERROR_VALUE_TOO_LARGE: 值超过 max_bytes
+ */
+int lmjcore_obj_member_get_capped(lmjcore_txn *txn, const lmjcore_ptr obj_ptr,
+                                  const char *member_name,
+                                  size_t member_name_len, size_t max_bytes,
+                                  uint8_t **out_buf, size_t *out_len);
 
 /**
  * @brief 解码存储格式的值为字符串
@@ -163,12 +179,6 @@ int lmjcore_decode_value(const uint8_t *data, size_t data_len, char **out_str,
  * @return const char* 类型字符串（静态常量，无需释放）
  */
 const char *value_type_to_string(api_value_type_t type);
-
-/**
- * @brief 释放路径解析结果
- */
-void lmjcore_free_path_parse_result(char *start_ptr, char **segments,
-                                    size_t segment_count);
 
 /**
  * @brief 检查事务是否超时

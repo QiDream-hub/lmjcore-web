@@ -19,6 +19,8 @@ typedef struct {
   size_t map_size;                    // 内存映射大小 (字节)
   int max_connections;                // 最大连接数
   int txn_timeout;                    // 事务超时 (秒)
+  int query_max_depth;                // 链式查询深度上限 (成员段数)
+  size_t max_value_bytes;             // 单个成员值/查询叶子值上限 (字节)
   int log_level;                      // 日志级别 (0=DEBUG, 1=INFO, 2=WARN, 3=ERROR)
   char log_output[CONFIG_MAX_LOG_OUTPUT];  // 日志输出目标 (stdout/stderr/文件路径)
 } config_t;

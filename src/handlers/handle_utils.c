@@ -251,159 +251,63 @@ int lmjcore_decode_value(const uint8_t *data, size_t data_len, char **out_str,
   }
 }
 
-// ==================== 路径解析工具 ====================
+// ==================== 成员值读取（受限） ====================
 
-int lmjcore_parse_query_path(const char *path_str, char **start_ptr_out,
-                             char ***segments_out, size_t *segment_count_out) {
-  if (!path_str || !start_ptr_out || !segments_out || !segment_count_out) {
+int lmjcore_obj_member_get_capped(lmjcore_txn *txn, const lmjcore_ptr obj_ptr,
+                                  const char *member_name,
+                                  size_t member_name_len, size_t max_bytes,
+                                  uint8_t **out_buf, size_t *out_len) {
+  if (!txn || !obj_ptr || !member_name || !out_buf || !out_len) {
     return LMJCORE_ERROR_NULL_POINTER;
   }
+  if (max_bytes == 0) {
+    max_bytes = HANDLE_DEFAULT_MAX_VALUE_BYTES;
+  }
+  if (max_bytes < 1) {
+    return LMJCORE_ERROR_VALUE_TOO_LARGE;
+  }
 
-  // 复制路径字符串以便修改
-  char *path_copy = strdup(path_str);
-  if (!path_copy) {
+  // 初始容量：小值一次命中；大值按倍增重试
+  size_t capacity = 1024;
+  if (capacity > max_bytes) {
+    capacity = max_bytes;
+  }
+
+  uint8_t *buf = (uint8_t *)malloc(capacity);
+  if (!buf) {
     return LMJCORE_ERROR_MEMORY_ALLOCATION_FAILED;
   }
 
-  // 找到第一个点号，分离指针和路径段
-  char *first_dot = strchr(path_copy, '.');
-  if (!first_dot) {
-    free(path_copy);
-    return LMJCORE_ERROR_INVALID_PARAM;
-  }
-
-  // 提取指针部分
-  size_t ptr_len = first_dot - path_copy;
-  if (ptr_len != LMJCORE_PTR_STRING_LEN) {
-    free(path_copy);
-    return LMJCORE_ERROR_INVALID_PARAM;
-  }
-
-  *start_ptr_out = (char *)malloc(ptr_len + 1);
-  if (!*start_ptr_out) {
-    free(path_copy);
-    return LMJCORE_ERROR_MEMORY_ALLOCATION_FAILED;
-  }
-  memcpy(*start_ptr_out, path_copy, ptr_len);
-  (*start_ptr_out)[ptr_len] = '\0';
-
-  // 解析路径段
-  char **segments = NULL;
-  size_t segment_count = 0;
-  size_t segment_capacity = 8;
-
-  segments = (char **)malloc(segment_capacity * sizeof(char *));
-  if (!segments) {
-    free(*start_ptr_out);
-    free(path_copy);
-    return LMJCORE_ERROR_MEMORY_ALLOCATION_FAILED;
-  }
-
-  char *segment_start = first_dot + 1;
-  char *p = segment_start;
-
-  while (*p) {
-    if (*p == '.') {
-      // 提取一个路径段
-      size_t seg_len = p - segment_start;
-      if (seg_len > 0) {
-        if (segment_count >= segment_capacity) {
-          segment_capacity *= 2;
-          char **new_segments =
-              (char **)realloc(segments, segment_capacity * sizeof(char *));
-          if (!new_segments) {
-            // 清理已分配的内存
-            for (size_t i = 0; i < segment_count; i++) {
-              free(segments[i]);
-            }
-            free(segments);
-            free(*start_ptr_out);
-            free(path_copy);
-            return LMJCORE_ERROR_MEMORY_ALLOCATION_FAILED;
-          }
-          segments = new_segments;
-        }
-
-        segments[segment_count] = (char *)malloc(seg_len + 1);
-        if (!segments[segment_count]) {
-          // 清理
-          for (size_t i = 0; i < segment_count; i++) {
-            free(segments[i]);
-          }
-          free(segments);
-          free(*start_ptr_out);
-          free(path_copy);
-          return LMJCORE_ERROR_MEMORY_ALLOCATION_FAILED;
-        }
-        // URL 解码路径段
-        int decoded_len = url_decode(segment_start, seg_len,
-                                     segments[segment_count], seg_len + 1);
-        if (decoded_len < 0) {
-          // 解码失败，直接复制
-          memcpy(segments[segment_count], segment_start, seg_len);
-          segments[segment_count][seg_len] = '\0';
-        }
-        segment_count++;
-      }
-      segment_start = p + 1;
+  for (;;) {
+    size_t got = 0;
+    int rc = lmjcore_obj_member_get(txn, obj_ptr, (const uint8_t *)member_name,
+                                    member_name_len, buf, capacity, &got);
+    if (rc == LMJCORE_SUCCESS) {
+      *out_buf = buf;
+      *out_len = got;
+      return LMJCORE_SUCCESS;
     }
-    p++;
-  }
-
-  // 处理最后一个路径段
-  size_t seg_len = p - segment_start;
-  if (seg_len > 0) {
-    if (segment_count >= segment_capacity) {
-      segment_capacity *= 2;
-      char **new_segments =
-          (char **)realloc(segments, segment_capacity * sizeof(char *));
-      if (!new_segments) {
-        for (size_t i = 0; i < segment_count; i++) {
-          free(segments[i]);
-        }
-        free(segments);
-        free(*start_ptr_out);
-        free(path_copy);
-        return LMJCORE_ERROR_MEMORY_ALLOCATION_FAILED;
-      }
-      segments = new_segments;
+    if (rc != LMJCORE_ERROR_BUFFER_TOO_SMALL) {
+      free(buf);
+      return rc;
+    }
+    if (capacity >= max_bytes) {
+      free(buf);
+      return LMJCORE_ERROR_VALUE_TOO_LARGE;
     }
 
-    segments[segment_count] = (char *)malloc(seg_len + 1);
-    if (!segments[segment_count]) {
-      for (size_t i = 0; i < segment_count; i++) {
-        free(segments[i]);
-      }
-      free(segments);
-      free(*start_ptr_out);
-      free(path_copy);
+    size_t next = capacity * 2;
+    if (next > max_bytes) {
+      next = max_bytes;
+    }
+    uint8_t *grown = (uint8_t *)realloc(buf, next);
+    if (!grown) {
+      free(buf);
       return LMJCORE_ERROR_MEMORY_ALLOCATION_FAILED;
     }
-    // URL 解码最后一个路径段
-    int decoded_len = url_decode(segment_start, seg_len,
-                                 segments[segment_count], seg_len + 1);
-    if (decoded_len < 0) {
-      // 解码失败，直接复制
-      memcpy(segments[segment_count], segment_start, seg_len);
-      segments[segment_count][seg_len] = '\0';
-    }
-    segment_count++;
+    buf = grown;
+    capacity = next;
   }
-
-  *segments_out = segments;
-  *segment_count_out = segment_count;
-  free(path_copy);
-
-  return LMJCORE_SUCCESS;
-}
-
-void lmjcore_free_path_parse_result(char *start_ptr, char **segments,
-                                    size_t segment_count) {
-  free(start_ptr);
-  for (size_t i = 0; i < segment_count; i++) {
-    free(segments[i]);
-  }
-  free(segments);
 }
 
 // ==================== 事务超时检查工具 ====================

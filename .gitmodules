@@ -1,12 +1,12 @@
 [submodule "thirdparty/LMJCore"]
 	path = thirdparty/LMJCore
-	url = git@github.com:QiDream-hub/LMJCore.git
+	url = https://github.com:QiDream-hub/LMJCore.git
 [submodule "thirdparty/URLRouter"]
 	path = thirdparty/URLRouter
-	url = git@github.com:QiDream-hub/URLRouter.git
+	url = https://github.com:QiDream-hub/URLRouter.git
 [submodule "thirdparty/cJSON"]
 	path = thirdparty/cJSON
 	url = https://github.com/DaveGamble/cJSON.git
 [submodule "thirdparty/zlog"]
 	path = thirdparty/zlog
-	url = git@github.com:HardySimpson/zlog.git
+	url = https://github.com:HardySimpson/zlog.git

@@ -1,23 +1,14 @@
 // src/handlers/utils_handle.c - 工具相关 HTTP 处理器
 #include "error_response.h"
 #include "handle_utils.h"
+#include "json_response.h"
 #include "lmjcore.h"
 
-#include <stdio.h>
+#include <stddef.h>
 #include <time.h>
 
 // 全局启动时间
 static time_t g_start_time = 0;
-
-// ==================== 事务超时检查宏 ====================
-
-#define CHECK_TXN_TIMEOUT(hp, response, txn)                                 \
-  do {                                                                       \
-    if (lmjcore_txn_check_timeout((hp)->txn_start_time, (hp)->txn_timeout)) {\
-      if (txn) lmjcore_txn_abort(txn);                                       \
-      RETURN_ERROR_TXN_TIMEOUT(response);                                    \
-    }                                                                        \
-  } while (0)
 
 // ==================== 工具处理器 ====================
 
@@ -41,9 +32,9 @@ int handle_ptr_exist(void *params, void *cbdata) {
     RETURN_ERROR_INVALID_PTR(response);
   }
 
-  // 开启读事务
+  // 开启读事务（批量操作时复用调用方的共享事务）
   lmjcore_txn *txn = NULL;
-  int rc = lmjcore_txn_begin(hp->env, NULL, LMJCORE_TXN_READONLY, &txn);
+  int rc = handle_txn_begin(hp, &txn, LMJCORE_TXN_READONLY);
   if (rc != LMJCORE_SUCCESS || !txn) {
     RETURN_ERROR_TXN_FAILED("begin", response);
   }
@@ -54,15 +45,17 @@ int handle_ptr_exist(void *params, void *cbdata) {
   // 检查实体是否存在
   int exists = lmjcore_entity_exist(txn, ptr);
 
-  lmjcore_txn_abort(txn);
+  // 只读事务结束（共享事务由调用方统一管理）
+  handle_txn_end(hp, txn, false);
 
   if (exists < 0) {
-    build_lmjcore_error_response(exists, response);
+    json_response_lmjcore_error(response, exists);
     return -1;
   }
 
   if (exists == 0) {
-    return build_success_response(HTTP_STATUS_OK, "{\"exist\":false}", response);
+    return json_response_set(response, HTTP_STATUS_OK,
+                             json_new_exist(false, NULL));
   }
 
   // 检查实体类型
@@ -70,11 +63,8 @@ int handle_ptr_exist(void *params, void *cbdata) {
   lmjcore_entity_type etype = (lmjcore_entity_type)ptr[0];
   const char *type_str = (etype == LMJCORE_OBJ) ? "object" : "set";
 
-  char json_buf[128];
-  snprintf(json_buf, sizeof(json_buf), "{\"exist\":true,\"type\":\"%s\"}",
-           type_str);
-
-  return build_success_response(HTTP_STATUS_OK, json_buf, response);
+  return json_response_set(response, HTTP_STATUS_OK,
+                           json_new_exist(true, type_str));
 }
 
 int handle_health(void *params, void *cbdata) {
@@ -86,11 +76,8 @@ int handle_health(void *params, void *cbdata) {
     g_start_time = time(NULL);
   }
 
-  time_t uptime = time(NULL) - g_start_time;
+  long uptime = (long)(time(NULL) - g_start_time);
 
-  char json_buf[256];
-  snprintf(json_buf, sizeof(json_buf), "{\"status\":\"ok\",\"uptime\":%ld}",
-           (long)uptime);
-
-  return build_success_response(HTTP_STATUS_OK, json_buf, response);
+  return json_response_set(response, HTTP_STATUS_OK,
+                           json_new_health("ok", uptime));
 }

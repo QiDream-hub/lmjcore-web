@@ -218,24 +218,4 @@ int handle_txn_begin(handle_params_t *hp, lmjcore_txn **txn_out, int flags);
  */
 int handle_txn_end(handle_params_t *hp, lmjcore_txn *txn, int success);
 
-/**
- * @brief 构建对象/集合的 JSON 响应（通用函数）
- *
- * @param ptr_str 指针字符串
- * @param items 项目数组（成员名或元素值）
- * @param types 类型数组
- * @param count 项目数量
- * @param item_label 项目标签（"name" 或 "value"）
- * @param out_json 输出 JSON 字符串（需调用方释放）
- * @param out_len 输出长度
- * @return int 错误码
- */
-int build_entity_json_response(const char *ptr_str,
-                               const char **items,
-                               const char **types,
-                               size_t count,
-                               const char *item_label,
-                               char **out_json,
-                               size_t *out_len);
-
 #endif // HANDLE_UTILS_H

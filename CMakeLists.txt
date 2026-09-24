@@ -134,6 +134,7 @@ set(SERVER_SOURCES
     ${SERVER_SRC_DIR}/handlers/set_handle.c
     ${SERVER_SRC_DIR}/handlers/utils_handle.c
     ${SERVER_SRC_DIR}/handlers/handle_utils.c
+    ${SERVER_SRC_DIR}/handlers/json_response.c
     ${SERVER_SRC_DIR}/handlers/query_handle.c
     ${SERVER_SRC_DIR}/handlers/nested_value.c
 )

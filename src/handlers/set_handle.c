@@ -46,7 +46,7 @@ int handle_set_create(void *params, void *cbdata) {
     if (auto_commit) {
       lmjcore_txn_abort(txn);
     }
-    build_lmjcore_error_response(rc, response);
+    json_response_lmjcore_error(response, rc);
     return -1;
   }
 
@@ -64,10 +64,7 @@ int handle_set_create(void *params, void *cbdata) {
   lmjcore_ptr_to_string(set_ptr, ptr_str, sizeof(ptr_str));
 
   // 构建响应
-  char json_buf[512];
-  snprintf(json_buf, sizeof(json_buf), "{\"ptr\":\"%s\"}", ptr_str);
-
-  return build_success_response(HTTP_STATUS_CREATED, json_buf, response);
+  return json_response_set(response, HTTP_STATUS_CREATED, json_new_ptr(ptr_str));
 }
 
 int handle_set_get(void *params, void *cbdata) {
@@ -146,99 +143,54 @@ int handle_set_get(void *params, void *cbdata) {
 
   if (rc != LMJCORE_SUCCESS) {
     free(result_buf);
-    build_lmjcore_error_response(rc, response);
+    json_response_lmjcore_error(response, rc);
     return -1;
   }
 
-  // 构建 JSON 响应 - 使用动态扩展策略
-  size_t json_size = 4096;
-  char *json_buf = (char *)malloc(json_size);
-  if (!json_buf) {
+  // 构建 JSON 响应：{"ptr":"...","elements":[{"value","type"}...],"count":N}
+  char ptr_out[LMJCORE_PTR_STRING_LEN + 1];
+  lmjcore_ptr_to_string(set_ptr, ptr_out, sizeof(ptr_out));
+
+  cJSON *elements = NULL;
+  cJSON *root = json_new_entity(ptr_out, "elements", &elements);
+  if (!root) {
     free(result_buf);
     RETURN_ERROR_NO_MEMORY(response);
   }
 
-  char ptr_out[LMJCORE_PTR_STRING_LEN + 1];
-  lmjcore_ptr_to_string(set_ptr, ptr_out, sizeof(ptr_out));
-
-  int offset =
-      snprintf(json_buf, json_size, "{\"ptr\":\"%s\",\"elements\":[", ptr_out);
-
-  // 遍历元素
+  size_t built_count = 0;
   for (size_t i = 0; i < result_head->element_count; i++) {
     lmjcore_descriptor *desc = &result_head->elements[i];
-    char *element_value = (char *)(result_buf + desc->value_offset);
+    const uint8_t *element_value =
+        (const uint8_t *)(result_buf + desc->value_offset);
 
     // 解码元素值
     char *value_str = NULL;
-    api_value_type_t value_type;
-    lmjcore_decode_value((uint8_t *)element_value, desc->value_len, &value_str,
-                         &value_type);
-
-    const char *type_str = value_type_to_string(value_type);
-
-    // 计算所需空间（预留足够余量）
-    size_t needed = strlen(value_str ? value_str : "") + 64;
-    
-    // 检查缓冲区是否需要扩展
-    while ((size_t)offset + needed >= json_size) {
-      json_size *= 2;
-      char *new_buf = (char *)realloc(json_buf, json_size);
-      if (!new_buf) {
-        free(value_str);
-        free(result_buf);
-        free(json_buf);
-        RETURN_ERROR_NO_MEMORY(response);
-      }
-      json_buf = new_buf;
+    api_value_type_t value_type = VALUE_TYPE_NULL;
+    if (lmjcore_decode_value(element_value, desc->value_len, &value_str,
+                             &value_type) != LMJCORE_SUCCESS) {
+      continue; // 无法解码的元素跳过，保证响应始终为合法 JSON
     }
 
-    int written = snprintf(json_buf + offset, json_size - offset,
-                       "%s{\"value\":\"%s\",\"type\":\"%s\"}", i > 0 ? "," : "",
-                       value_str ? value_str : "", type_str);
-    
-    if (written < 0 || (size_t)written >= json_size - offset) {
-      // 缓冲区仍然不够，继续扩展
-      json_size *= 2;
-      char *new_buf = (char *)realloc(json_buf, json_size);
-      if (!new_buf) {
-        free(value_str);
-        free(result_buf);
-        free(json_buf);
-        RETURN_ERROR_NO_MEMORY(response);
-      }
-      json_buf = new_buf;
-      written = snprintf(json_buf + offset, json_size - offset,
-                       "%s{\"value\":\"%s\",\"type\":\"%s\"}", i > 0 ? "," : "",
-                       value_str ? value_str : "", type_str);
-    }
-    offset += written;
-
+    cJSON *item = json_new_value(value_str, value_type_to_string(value_type));
     free(value_str);
-  }
 
-  // 确保结尾有足够空间
-  while ((size_t)offset + 32 >= json_size) {
-    json_size *= 2;
-    char *new_buf = (char *)realloc(json_buf, json_size);
-    if (!new_buf) {
+    if (!json_array_append(elements, item)) {
+      cJSON_Delete(root);
       free(result_buf);
-      free(json_buf);
       RETURN_ERROR_NO_MEMORY(response);
     }
-    json_buf = new_buf;
+    built_count++;
   }
-  
-  offset += snprintf(json_buf + offset, json_size - offset, "],\"count\":%zu}",
-                     result_head->element_count);
+
+  if (json_entity_set_count(root, built_count) != 0) {
+    cJSON_Delete(root);
+    free(result_buf);
+    RETURN_ERROR_NO_MEMORY(response);
+  }
 
   free(result_buf);
-
-  response->status_code = 200;
-  response->body = json_buf;
-  response->body_len = strlen(json_buf);
-
-  return 0;
+  return json_response_set(response, HTTP_STATUS_OK, root);
 }
 
 int handle_set_add(void *params, void *cbdata) {
@@ -328,7 +280,7 @@ int handle_set_add(void *params, void *cbdata) {
     }
     free(encoded_value);
     cJSON_Delete(body);
-    build_lmjcore_error_response(rc, response);
+    json_response_lmjcore_error(response, rc);
     return -1;
   }
 
@@ -341,8 +293,8 @@ int handle_set_add(void *params, void *cbdata) {
       lmjcore_txn_abort(txn);
     }
     cJSON_Delete(body);
-    return build_error_response(HTTP_STATUS_CONFLICT,
-                                "Element already exists", response);
+    return json_response_error(response, HTTP_STATUS_CONFLICT,
+                               "Element already exists");
   }
 
   if (rc != LMJCORE_SUCCESS) {
@@ -350,7 +302,7 @@ int handle_set_add(void *params, void *cbdata) {
       lmjcore_txn_abort(txn);
     }
     cJSON_Delete(body);
-    build_lmjcore_error_response(rc, response);
+    json_response_lmjcore_error(response, rc);
     return -1;
   }
 
@@ -365,7 +317,7 @@ int handle_set_add(void *params, void *cbdata) {
   }
 
   cJSON_Delete(body);
-  return build_success_response(HTTP_STATUS_OK, "{\"success\":true}", response);
+  return json_response_success(response, HTTP_STATUS_OK);
 }
 
 int handle_set_remove(void *params, void *cbdata) {
@@ -455,7 +407,7 @@ int handle_set_remove(void *params, void *cbdata) {
     }
     free(encoded_value);
     cJSON_Delete(body);
-    build_lmjcore_error_response(rc, response);
+    json_response_lmjcore_error(response, rc);
     return -1;
   }
 
@@ -468,7 +420,7 @@ int handle_set_remove(void *params, void *cbdata) {
       lmjcore_txn_abort(txn);
     }
     cJSON_Delete(body);
-    build_lmjcore_error_response(rc, response);
+    json_response_lmjcore_error(response, rc);
     return -1;
   }
 
@@ -483,7 +435,7 @@ int handle_set_remove(void *params, void *cbdata) {
   }
 
   cJSON_Delete(body);
-  return build_success_response(HTTP_STATUS_OK, "{\"success\":true}", response);
+  return json_response_success(response, HTTP_STATUS_OK);
 }
 
 int handle_set_del(void *params, void *cbdata) {
@@ -540,7 +492,7 @@ int handle_set_del(void *params, void *cbdata) {
     if (auto_commit) {
       lmjcore_txn_abort(txn);
     }
-    build_lmjcore_error_response(rc, response);
+    json_response_lmjcore_error(response, rc);
     return -1;
   }
 
@@ -553,7 +505,7 @@ int handle_set_del(void *params, void *cbdata) {
     }
   }
 
-  return build_success_response(HTTP_STATUS_OK, "{\"success\":true}", response);
+  return json_response_success(response, HTTP_STATUS_OK);
 }
 
 // ==================== 集合初始化处理器（原子创建 + 嵌套元素） ====================
@@ -584,15 +536,15 @@ int handle_set_init(void *params, void *cbdata) {
   // 解析请求体：必须为 JSON 数组（元素列表）
   cJSON *root = hp->body ? cJSON_ParseWithOpts(hp->body, NULL, 0) : NULL;
   if (!root) {
-    return build_error_response(HTTP_STATUS_BAD_REQUEST,
-                                "Invalid JSON in request body", response);
+    return json_response_error(response, HTTP_STATUS_BAD_REQUEST,
+                               "Invalid JSON in request body");
   }
 
   if (!cJSON_IsArray(root)) {
     cJSON_Delete(root);
-    return build_error_response(
-        HTTP_STATUS_BAD_REQUEST,
-        "Request body must be a JSON array (element list)", response);
+    return json_response_error(
+        response, HTTP_STATUS_BAD_REQUEST,
+        "Request body must be a JSON array (element list)");
   }
 
   // 检查是否已有事务（批量操作场景）
@@ -623,7 +575,7 @@ int handle_set_init(void *params, void *cbdata) {
       lmjcore_txn_abort(txn);
     }
     cJSON_Delete(root);
-    build_lmjcore_error_response(rc, response);
+    json_response_lmjcore_error(response, rc);
     return -1;
   }
 
@@ -643,8 +595,8 @@ int handle_set_init(void *params, void *cbdata) {
         lmjcore_txn_abort(txn);
       }
       cJSON_Delete(root);
-      return build_error_response(lmjcore_error_to_http_status(rc), reason,
-                                  response);
+      return json_response_error(response, lmjcore_error_to_http_status(rc),
+                                 "%s", reason);
     }
 
     // 添加元素（重复元素自动去重，不报错）
@@ -660,8 +612,8 @@ int handle_set_init(void *params, void *cbdata) {
         lmjcore_txn_abort(txn);
       }
       cJSON_Delete(root);
-      return build_error_response(lmjcore_error_to_http_status(rc), reason,
-                                  response);
+      return json_response_error(response, lmjcore_error_to_http_status(rc),
+                                 "%s", reason);
     }
     index++;
   }
@@ -675,7 +627,7 @@ int handle_set_init(void *params, void *cbdata) {
       lmjcore_txn_abort(txn);
     }
     cJSON_Delete(root);
-    build_lmjcore_error_response(rc, response);
+    json_response_lmjcore_error(response, rc);
     return -1;
   }
 
@@ -695,9 +647,7 @@ int handle_set_init(void *params, void *cbdata) {
   char ptr_str[LMJCORE_PTR_STRING_LEN + 1];
   lmjcore_ptr_to_string(set_ptr, ptr_str, sizeof(ptr_str));
 
-  char json_buf[512];
-  snprintf(json_buf, sizeof(json_buf), "{\"ptr\":\"%s\",\"element_count\":%zu}",
-           ptr_str, distinct_count);
-
-  return build_success_response(HTTP_STATUS_CREATED, json_buf, response);
+  return json_response_set(
+      response, HTTP_STATUS_CREATED,
+      json_new_counted_ptr(ptr_str, "element_count", distinct_count));
 }

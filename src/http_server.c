@@ -42,18 +42,21 @@ typedef struct {
 } thread_args_t;
 
 /**
- * @brief 日志输出
+ * @brief 请求日志输出
  */
-static void log_request(const char *method, const char *url, int status_code,
-                        const char *client_ip) {
-  if (status_code >= 500) {
-    dzlog_error("%s - %s %s -> %d", client_ip, method, url, status_code);
-  } else if (status_code >= 400) {
-    dzlog_warn("%s - %s %s -> %d", client_ip, method, url, status_code);
-  } else {
-    dzlog_info("%s - %s %s -> %d", client_ip, method, url, status_code);
-  }
-}
+#define LOG_REQUEST(method, url, status_code, client_ip)                       \
+  do {                                                                         \
+    if ((status_code) >= 500) {                                                \
+      dzlog_error("%s - %s %s -> %d", (client_ip), (method), (url),            \
+                  (status_code));                                              \
+    } else if ((status_code) >= 400) {                                         \
+      dzlog_warn("%s - %s %s -> %d", (client_ip), (method), (url),             \
+                 (status_code));                                               \
+    } else {                                                                   \
+      dzlog_info("%s - %s %s -> %d", (client_ip), (method), (url),             \
+                 (status_code));                                               \
+    }                                                                          \
+  } while (0)
 
 /**
  * @brief 设置套接字选项
@@ -236,13 +239,13 @@ static THREAD_RETURN_TYPE handle_connection_thread(void *arg) {
 
   if (response_len > 0) {
     send_http_response(client_fd, response_buf, response_len);
-    log_request(method_str, url_str, response.status_code, client_ip);
+    LOG_REQUEST(method_str, url_str, response.status_code, client_ip);
   } else {
     const char *fallback = "HTTP/1.1 500 Internal Server Error\r\n"
                            "Content-Length: 0\r\n"
                            "Connection: close\r\n\r\n";
     send_http_response(client_fd, fallback, strlen(fallback));
-    log_request(method_str, url_str, response.status_code, client_ip);
+    LOG_REQUEST(method_str, url_str, response.status_code, client_ip);
   }
 
   http_free_response(&response);

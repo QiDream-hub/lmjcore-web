@@ -6,6 +6,7 @@
  */
 
 #include <llhttp.h>
+#include "cJSON.h"
 #include "zlog.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -50,8 +51,7 @@ typedef struct http_parser_context {
 // 公开响应结构（与 http_parser.h 一致）
 typedef struct {
   int status_code;
-  char *body;
-  size_t body_len;
+  cJSON *json;
 } http_response_t;
 
 // 公开请求结构（与 http_parser.h 一致）
@@ -342,13 +342,32 @@ static const char *get_status_text(int status_code) {
 }
 
 int http_build_response(const http_response_t *response, char *out_buf,
-                        size_t out_buf_size) {
+                        size_t out_buf_size, size_t *body_len_out) {
   if (!response || !out_buf || out_buf_size == 0) return -1;
 
   const char *status_text = get_status_text(response->status_code);
-  int written = 0;
+  char *printed = NULL;
+  const char *body = NULL;
+  size_t body_len = 0;
 
-  if (response->body && response->body_len > 0) {
+  if (response->json) {
+    printed = cJSON_PrintUnformatted(response->json);
+    if (!printed) {
+      if (body_len_out) *body_len_out = 0;
+      return -1;
+    }
+    body = printed;
+    body_len = strlen(printed);
+  } else if (response->status_code >= 400) {
+    // json 缺失但有错误状态：通常是内存分配失败，输出固定兜底体
+    body = "{\"error\":\"Internal Server Error\"}";
+    body_len = strlen(body);
+  }
+
+  if (body_len_out) *body_len_out = body_len;
+
+  int written = 0;
+  if (body && body_len > 0) {
     written = snprintf(out_buf, out_buf_size,
                        "HTTP/1.1 %d %s\r\n"
                        "Access-Control-Allow-Origin: *\r\n"
@@ -359,8 +378,8 @@ int http_build_response(const http_response_t *response, char *out_buf,
                        "Connection: close\r\n"
                        "\r\n"
                        "%.*s",
-                       response->status_code, status_text, response->body_len,
-                       (int)response->body_len, response->body);
+                       response->status_code, status_text, body_len,
+                       (int)body_len, body);
   } else {
     written = snprintf(out_buf, out_buf_size,
                        "HTTP/1.1 %d %s\r\n"
@@ -373,6 +392,7 @@ int http_build_response(const http_response_t *response, char *out_buf,
                        response->status_code, status_text);
   }
 
+  free(printed);
   if (written < 0 || (size_t)written >= out_buf_size) return -2;
   return written;
 }
@@ -391,8 +411,7 @@ void http_free_request(http_request_t *request) {
 void http_free_response(http_response_t *response) {
   if (!response) return;
 
-  free(response->body);
-  response->body = NULL;
-  response->body_len = 0;
+  cJSON_Delete(response->json);
+  response->json = NULL;
   response->status_code = 0;
 }

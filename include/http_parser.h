@@ -1,6 +1,7 @@
 #ifndef HTTP_PARSER_H
 #define HTTP_PARSER_H
 
+#include "cJSON.h"
 #include "router.h"
 
 // ==================== HTTP 请求结构 ====================
@@ -21,8 +22,7 @@ typedef struct {
 
 typedef struct {
   int status_code;          // HTTP 状态码
-  char *body;               // JSON 响应体
-  size_t body_len;          // 响应体长度
+  cJSON *json;              // JSON 响应文档（持有所有权，发送前统一序列化）
 } http_response_t;
 
 // ==================== llhttp 解析器上下文（不透明指针） ====================
@@ -55,14 +55,15 @@ int http_parser_execute(http_parser_context_t *ctx, const char *data,
 http_request_t *http_parser_get_request(http_parser_context_t *ctx);
 
 /**
- * @brief 构建 HTTP 响应
+ * @brief 构建 HTTP 响应（内部序列化 response->json）
  * @param response 响应结构
  * @param out_buf 输出缓冲区
  * @param out_buf_size 缓冲区大小
+ * @param body_len_out 可选：输出序列化后的响应体字节数（可为 NULL）
  * @return int 构建的响应长度，负数表示错误
  */
 int http_build_response(const http_response_t *response, char *out_buf,
-                        size_t out_buf_size);
+                        size_t out_buf_size, size_t *body_len_out);
 
 /**
  * @brief 释放 HTTP 请求资源

@@ -14,56 +14,28 @@
 
 #define MAX_OPERATIONS 1000
 
-// ==================== 操作结果结构 ====================
-
-typedef struct {
-  int status_code;
-  cJSON *body; // 单个操作的响应体（拥有所有权，可为 NULL）
-} batch_result_t;
-
 // ==================== 内部工具 ====================
-
-typedef int (*handler_fn)(void *, void *);
-
-/**
- * @brief 内部调用处理器，复用现有路由处理器逻辑
- */
-static int invoke_handler(handler_fn handler, handle_params_t *params,
-                          http_response_t *response) {
-  // 清空响应
-  if (response->body) {
-    free(response->body);
-    response->body = NULL;
-    response->body_len = 0;
-  }
-
-  return handler(params, response);
-}
 
 /**
  * @brief 记录单个操作的错误结果（{"error":"..."}）
+ *
+ * 结果直接复用 http_response_t，避免子处理器与批处理之间来回序列化/解析。
  */
-static void set_result_error(batch_result_t *result, int status_code,
+static void set_result_error(http_response_t *result, int status_code,
                              const char *message) {
-  result->status_code = status_code;
-  result->body = cJSON_CreateObject();
-  if (result->body &&
-      !cJSON_AddStringToObject(result->body, "error", message)) {
-    cJSON_Delete(result->body);
-    result->body = NULL;
-  }
+  json_response_error(result, status_code, "%s", message);
 }
 
 /**
- * @brief 释放结果区间内所有操作的响应体
+ * @brief 释放结果区间内所有操作的响应节点
  */
-static void free_results(batch_result_t *results, int count) {
+static void free_results(http_response_t *results, int count) {
   if (!results) {
     return;
   }
   for (int i = 0; i < count; i++) {
-    cJSON_Delete(results[i].body);
-    results[i].body = NULL;
+    cJSON_Delete(results[i].json);
+    results[i].json = NULL;
   }
 }
 
@@ -73,7 +45,7 @@ static void free_results(batch_result_t *results, int count) {
  * @brief 解析单个操作，构建参数，调用对应处理器
  */
 static int execute_operation(handle_params_t *hp, const cJSON *op_obj,
-                             batch_result_t *result) {
+                             http_response_t *result) {
   // 解析 method 和 path
   cJSON *method_item = cJSON_GetObjectItemCaseSensitive(op_obj, "method");
   cJSON *path_item = cJSON_GetObjectItemCaseSensitive(op_obj, "path");
@@ -154,7 +126,7 @@ static int execute_operation(handle_params_t *hp, const cJSON *op_obj,
   http_response_t response = {0};
 
   // 获取并调用处理器
-  handler_fn handler = (handler_fn)router_get_callback(node);
+  route_callback_t handler = router_get_callback(node);
   if (!handler) {
     set_result_error(result, HTTP_STATUS_INTERNAL_SERVER_ERROR,
                      "Handler not found");
@@ -163,19 +135,12 @@ static int execute_operation(handle_params_t *hp, const cJSON *op_obj,
   }
 
   // 调用处理器（失败与否以响应状态码为准）
-  invoke_handler(handler, &local_params, &response);
+  handler(&local_params, &response);
 
-  // 接管子处理器的 JSON 响应体（避免字符串与 JSON 之间的反复转换）
+  // 直接接管子处理器的 cJSON 响应节点，避免字符串与 JSON 之间的反复转换
   result->status_code = response.status_code;
-  if (response.body) {
-    result->body = cJSON_Parse(response.body);
-    if (!result->body) {
-      // 理论上不会发生：子处理器始终返回 JSON，退化为字符串保证不丢信息
-      result->body = cJSON_CreateString(response.body);
-    }
-    free(response.body);
-    response.body = NULL;
-  }
+  result->json = response.json;
+  response.json = NULL;
 
   // 清理
   free(body_str);
@@ -256,8 +221,8 @@ static int handle_batch_core(handle_params_t *hp, cJSON *root, int readonly,
   hp->auto_manage_txn = false;
 
   // 分配结果数组
-  batch_result_t *results =
-      (batch_result_t *)calloc((size_t)op_count, sizeof(batch_result_t));
+  http_response_t *results =
+      (http_response_t *)calloc((size_t)op_count, sizeof(http_response_t));
   if (!results) {
     lmjcore_txn_abort(txn);
     cJSON_Delete(root);
@@ -317,9 +282,9 @@ static int handle_batch_core(handle_params_t *hp, cJSON *root, int readonly,
       RETURN_ERROR_NO_MEMORY(response);
     }
 
-    if (results[failed_index].body) {
-      cJSON *details = results[failed_index].body;
-      results[failed_index].body = NULL; // 所有权转移
+    if (results[failed_index].json) {
+      cJSON *details = results[failed_index].json;
+      results[failed_index].json = NULL; // 所有权转移
       if (!cJSON_AddItemToObject(error, "details", details)) {
         cJSON_Delete(details);
       }
@@ -369,15 +334,14 @@ static int handle_batch_core(handle_params_t *hp, cJSON *root, int readonly,
 
   for (int i = 0; i < op_count; i++) {
     cJSON *result_item = cJSON_CreateObject();
-    if (!result_item ||
-        !cJSON_AddNumberToObject(result_item, "status",
-                                 results[i].status_code)) {
+    if (!result_item || !cJSON_AddNumberToObject(result_item, "status",
+                                                 results[i].status_code)) {
       cJSON_Delete(result_item);
       goto oom_success;
     }
 
-    cJSON *body_json = results[i].body;
-    results[i].body = NULL; // 所有权转移给 result_item
+    cJSON *body_json = results[i].json;
+    results[i].json = NULL; // 所有权转移给 result_item
     if (body_json) {
       if (!cJSON_AddItemToObject(result_item, "body", body_json)) {
         cJSON_Delete(body_json);

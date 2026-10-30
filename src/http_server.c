@@ -168,9 +168,7 @@ static THREAD_RETURN_TYPE handle_connection_thread(void *arg) {
         url_str = request->url ? request->url : "/";
 
         if (request->method == HTTP_OPTIONS) {
-          response.status_code = 204;
-          response.body = NULL;
-          response.body_len = 0;
+          response.status_code = HTTP_STATUS_NO_CONTENT;
         } else if (server->router) {
           route_node_t *node =
               router_match(server->router, request->method, request->url);
@@ -201,44 +199,37 @@ static THREAD_RETURN_TYPE handle_connection_thread(void *arg) {
 
             int handler_result = handler(&h_params, &response);
 
-            if (handler_result != 0 && response.body == NULL) {
-              response.status_code = 500;
-              response.body = strdup("{\"error\":\"Internal Server Error\"}");
-              response.body_len = strlen(response.body);
+            if (handler_result != 0 && response.json == NULL) {
+              json_response_error(&response, HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                                  "Internal Server Error");
             }
           } else {
-            response.status_code = 404;
-            response.body = strdup("{\"error\":\"Not Found\"}");
-            response.body_len = strlen(response.body);
+            json_response_error(&response, HTTP_STATUS_NOT_FOUND, "Not Found");
           }
         } else {
-          response.status_code = 500;
-          response.body = strdup("{\"error\":\"Router not configured\"}");
-          response.body_len = strlen(response.body);
+          json_response_error(&response, HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                              "Router not configured");
         }
       } else {
-        response.status_code = 500;
-        response.body = strdup("{\"error\":\"Failed to get request\"}");
-        response.body_len = strlen(response.body);
+        json_response_error(&response, HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                            "Failed to get request");
       }
     } else {
-      response.status_code = 400;
-      response.body = strdup("{\"error\":\"Bad Request\"}");
-      response.body_len = strlen(response.body);
+      json_response_error(&response, HTTP_STATUS_BAD_REQUEST, "Bad Request");
     }
   } else if (bytes_read <= 0) {
-    response.status_code = 400;
-    response.body = strdup("{\"error\":\"Failed to read request\"}");
-    response.body_len = strlen(response.body);
+    json_response_error(&response, HTTP_STATUS_BAD_REQUEST,
+                        "Failed to read request");
   }
 
   if (response.status_code == 0) {
-    response.status_code = 200;
+    response.status_code = HTTP_STATUS_OK;
   }
 
   char response_buf[32768];
-  int response_len =
-      http_build_response(&response, response_buf, sizeof(response_buf));
+  size_t body_len = 0;
+  int response_len = http_build_response(&response, response_buf,
+                                         sizeof(response_buf), &body_len);
 
   if (response_len <= 0) {
     // 响应体超出传输缓冲（或构建失败）：返回明确的 JSON 413，
@@ -246,9 +237,9 @@ static THREAD_RETURN_TYPE handle_connection_thread(void *arg) {
     http_response_t oversize = {0};
     json_response_error(&oversize, HTTP_STATUS_PAYLOAD_TOO_LARGE,
                         "Response body too large (%zu bytes, limit %zu)",
-                        response.body_len, sizeof(response_buf));
-    response_len =
-        http_build_response(&oversize, response_buf, sizeof(response_buf));
+                        body_len, sizeof(response_buf));
+    response_len = http_build_response(&oversize, response_buf,
+                                       sizeof(response_buf), NULL);
     if (response_len <= 0) {
       const char *fallback = "HTTP/1.1 500 Internal Server Error\r\n"
                              "Content-Length: 0\r\n"
@@ -258,7 +249,7 @@ static THREAD_RETURN_TYPE handle_connection_thread(void *arg) {
       send_http_response(client_fd, response_buf, response_len);
     }
     dzlog_warn("Response too large: status=%d body_len=%zu limit=%zu",
-               response.status_code, response.body_len, sizeof(response_buf));
+               response.status_code, body_len, sizeof(response_buf));
     LOG_REQUEST(method_str, url_str, response.status_code, client_ip);
     http_free_response(&oversize);
   } else {

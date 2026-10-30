@@ -10,55 +10,15 @@
 
 // ==================== 内部工具 ====================
 
-/** 固定的内存分配失败响应体 */
-#define JSON_RESPONSE_OOM_BODY "{\"error\":\"Memory allocation failed\"}"
-
-/** 写入内存分配失败响应（response 必须非 NULL，且旧 body 已释放） */
-static int write_oom_body(http_response_t *response) {
-  response->status_code = HTTP_STATUS_INTERNAL_SERVER_ERROR;
-  response->body = strdup(JSON_RESPONSE_OOM_BODY);
-  response->body_len = response->body ? strlen(response->body) : 0;
-  return -1;
-}
-
-/** 释放旧响应体并写入内存分配失败响应 */
+/** 释放旧响应节点并记录内存分配失败状态（响应体留空，由发送层兜底） */
 static int oom_response(http_response_t *response) {
   if (!response) {
     return -1;
   }
-  if (response->body) {
-    free(response->body);
-    response->body = NULL;
-    response->body_len = 0;
-  }
-  return write_oom_body(response);
-}
-
-/**
- * @brief 用已分配的字符串设置响应体（接管所有权）
- * @param body malloc 分配的字符串（可为 NULL，此时写入内存错误响应）
- */
-static int set_owned_body(http_response_t *response, int status_code,
-                          char *body) {
-  if (!response) {
-    free(body);
-    return -1;
-  }
-
-  if (response->body) {
-    free(response->body);
-    response->body = NULL;
-    response->body_len = 0;
-  }
-
-  if (!body) {
-    return write_oom_body(response);
-  }
-
-  response->status_code = status_code;
-  response->body = body;
-  response->body_len = strlen(body);
-  return 0;
+  cJSON_Delete(response->json);
+  response->json = NULL;
+  response->status_code = HTTP_STATUS_INTERNAL_SERVER_ERROR;
+  return -1;
 }
 
 /** 追加字符串字段（NULL 视为空串），失败返回 false */
@@ -74,15 +34,21 @@ static bool add_number(cJSON *obj, const char *key, double value) {
 // ==================== 响应输出 ====================
 
 int json_response_set(http_response_t *response, int status_code, cJSON *root) {
-  if (!root) {
-    return oom_response(response);
+  if (!response) {
+    cJSON_Delete(root);
+    return -1;
   }
 
-  // cJSON_PrintUnformatted 返回 malloc 字符串，可直接作为响应体
-  char *body = cJSON_PrintUnformatted(root);
-  cJSON_Delete(root);
+  cJSON_Delete(response->json);
+  response->json = root;
 
-  return set_owned_body(response, status_code, body);
+  if (!root) {
+    response->status_code = HTTP_STATUS_INTERNAL_SERVER_ERROR;
+    return -1;
+  }
+
+  response->status_code = status_code;
+  return 0;
 }
 
 int json_response_error(http_response_t *response, int status_code,

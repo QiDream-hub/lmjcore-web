@@ -1,14 +1,15 @@
 // include/json_response.h - 统一 JSON 响应构建层（基于 cJSON）
 //
 // 设计目标：
-//   1. 所有 HTTP JSON 响应体只在本模块内序列化，处理器不再手写 snprintf/字符串拼接；
+//   1. 处理器只负责构建 cJSON 响应模型，响应体的序列化统一交给发送层
+//      （http_build_response）完成，处理器不再手写 snprintf/字符串拼接；
 //   2. 字符串（成员名/成员值/错误信息）统一由 cJSON 转义，避免产生非法 JSON；
 //   3. 响应体长度不再受固定栈缓冲区限制，大成员值不会被静默截断；
 //   4. 响应模型（ptr/members/elements/count/error/exist/health）集中定义，便于统一演进。
 //
 // 所有权约定：
 //   - json_new_* 返回新分配的 cJSON 文档，调用方负责 cJSON_Delete 或交给
-//     json_response_set（后者接管所有权，无论成功失败都会释放）。
+//     json_response_set（后者接管所有权，随响应一并释放）。
 //   - json_array_append 接管 item 所有权（失败时自动释放）。
 #ifndef JSON_RESPONSE_H
 #define JSON_RESPONSE_H
@@ -23,12 +24,15 @@
 // ==================== 响应输出 ====================
 
 /**
- * @brief 将 cJSON 文档序列化（紧凑格式）为响应体，并接管其所有权
+ * @brief 设置响应状态码并接管 cJSON 文档所有权（不在此处序列化）
+ *
+ * 响应体在发送阶段由 http_build_response 统一序列化，避免处理器层反复
+ * 序列化/解析。
  *
  * @param response 响应结构
  * @param status_code HTTP 状态码
- * @param root cJSON 文档（可为 NULL，此时返回内存错误响应）
- * @return int 0 成功，-1 失败（已写入错误响应体）
+ * @param root cJSON 文档（可为 NULL，此时记录内存错误状态）
+ * @return int 0 成功，-1 失败
  */
 int json_response_set(http_response_t *response, int status_code, cJSON *root);
 

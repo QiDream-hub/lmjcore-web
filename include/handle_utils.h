@@ -2,6 +2,7 @@
 #ifndef HANDLE_UTILS_H
 #define HANDLE_UTILS_H
 
+#include "cJSON.h"
 #include "lmjcore.h"
 #include "router.h"
 #include <stdbool.h>
@@ -11,16 +12,15 @@
 
 // ==================== 值类型标记 ====================
 
-// 值类型标记（存储格式）
+// 存储标签 / 编码类型（lmjcore_encode_value 的 type 参数）
 #define LMJCORE_VALUE_TYPE_RAW 0x00  // 原始数据
 #define LMJCORE_VALUE_TYPE_PTR 0x01  // 指针引用
 #define LMJCORE_VALUE_TYPE_NULL 0x02 // 空值
 
-// API 返回的类型标识
+// API 返回类型（读取时区分 obj/set；raw/null 数值与存储标签对齐）
 typedef enum {
-  VALUE_TYPE_RAW = 0,
-  VALUE_TYPE_REF = 1,
-  VALUE_TYPE_NULL = 2,
+  VALUE_TYPE_RAW = LMJCORE_VALUE_TYPE_RAW,   // 0
+  VALUE_TYPE_NULL = LMJCORE_VALUE_TYPE_NULL, // 2
   VALUE_TYPE_SET = 3,
   VALUE_TYPE_OBJECT = 4
 } api_value_type_t;
@@ -126,16 +126,40 @@ int lmjcore_ptr_from_hex(const char *str, uint8_t *ptr_out);
 int lmjcore_ptr_to_hex(const uint8_t *ptr, char *str_out);
 
 /**
+ * @brief 将类型字符串解析为存储标签
+ *
+ * @param type_str 类型字符串（"raw" / "ref" / "null"）
+ * @return int 对应的 LMJCORE_VALUE_TYPE_*，无法识别返回 -1
+ */
+int encode_type_from_string(const char *type_str);
+
+/**
+ * @brief 从请求体解析 {value, type}
+ *
+ * 要求 body 为对象，且 value、type 均为字符串，type 取值为 raw/ref/null。
+ *
+ * @param body 请求体 JSON 对象
+ * @param out_value 输出：value 字符串
+ * @param out_value_len 输出：value 长度
+ * @param out_type 输出：LMJCORE_VALUE_TYPE_* 存储标签
+ * @return int LMJCORE_SUCCESS 成功；LMJCORE_ERROR_INVALID_PARAM 缺失或非法
+ */
+int handle_parse_typed_value(const cJSON *body, const char **out_value,
+                             size_t *out_value_len, int *out_type);
+
+/**
  * @brief 编码值为存储格式
  *
  * @param value_str 输入值字符串
  * @param value_len 值长度
+ * @param type 存储标签（LMJCORE_VALUE_TYPE_RAW / PTR / NULL）
  * @param out_buf 输出缓冲区
  * @param out_buf_size 输出缓冲区大小
  * @param out_len 输出实际长度
  * @return int 错误码
+ *   - LMJCORE_ERROR_INVALID_PARAM: 未知类型，或 PTR 时 value_str 非合法指针
  */
-int lmjcore_encode_value(const char *value_str, size_t value_len,
+int lmjcore_encode_value(const char *value_str, size_t value_len, int type,
                          uint8_t *out_buf, size_t out_buf_size,
                          size_t *out_len);
 

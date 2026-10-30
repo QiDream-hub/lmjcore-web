@@ -21,7 +21,7 @@
 | **RESTful API** | 提供标准的 REST 风格接口 |
 | **事务管理** | 请求级自动事务，支持超时控制 |
 | **链式查询** | 深度访问嵌套路径（配合批量接口做多路径整合） |
-| **自动类型识别** | 智能识别指针引用、原始数据、空值 |
+| **显式值类型** | 写入用 `type` 声明 `raw`/`ref`/`null`；读取区分 `raw`/`null`/`object`/`set` |
 | **集合支持** | 支持无序集合的 CRUD 操作 |
 | **高性能 HTTP 解析** | 基于 llhttp 实现，100% RFC 7230 兼容 |
 
@@ -175,13 +175,14 @@ include/
 | 函数 | 说明 |
 |------|------|
 | `route_params_get` | 从路由参数中获取指定索引的参数 |
-| `json_get_string` | 从 JSON 对象中提取字符串值 |
 | `lmjcore_ptr_from_hex` | 十六进制字符串 → 二进制指针 |
 | `lmjcore_ptr_to_hex` | 二进制指针 → 十六进制字符串 |
+| `encode_type_from_string` | 请求 `type` 字符串（`raw`/`ref`/`null`）→ 存储标签 |
+| `handle_parse_typed_value` | 从请求体解析 `{value, type}` |
 | `lmjcore_obj_member_get_capped` | 读取成员值（按需增长，受上限约束） |
 | `value_type_to_string` | API 值类型 → 类型字符串 |
-| `lmjcore_encode_value` | 编码值为存储格式 |
-| `lmjcore_decode_value` | 解码存储格式的值 |
+| `lmjcore_encode_value` | 按指定存储标签编码值 |
+| `lmjcore_decode_value` | 解码存储格式的值为 API 类型 |
 
 ---
 
@@ -269,17 +270,30 @@ DELETE /set/02def456.../elements
 GET /set/02def456...  // → 404 Not Found
 ```
 
-### 4.3 指针存储格式
+### 4.3 值存储格式与类型表示
 
-所有值统一添加 1 字节类型标记：
+所有值落库时统一添加 1 字节**存储标签**（`LMJCORE_VALUE_TYPE_*`）：
 
 ```
 ┌──────────────────────────────────────────┐
-│ 原始数据：  [0x00][data...]              │
-│ 指针引用：  [0x01][17B 指针]             │
-│ 空值：      [0x02]                       │
+│ 原始数据 RAW  ：  [0x00][data...]        │
+│ 指针引用 PTR  ：  [0x01][17B 指针]       │
+│ 空值     NULL ：  [0x02]                 │
 └──────────────────────────────────────────┘
 ```
+
+存储标签与对外 API 类型（`api_value_type_t`）是**两个不同层次**，不可混用：
+
+| 存储标签 | API 类型 | 说明 |
+|----------|----------|------|
+| `RAW (0x00)` | `raw` | 原始数据 |
+| `NULL (0x02)` | `null` | 空值 |
+| `PTR (0x01)` + 载荷首字节 `01` | `object` | 对象引用 |
+| `PTR (0x01)` + 载荷首字节 `02` | `set` | 集合引用 |
+
+- **存储层只关心「是不是指针」**：对象/集合引用都存为 `PTR`，具体类型由 17 字节指针载荷首字节区分。
+- **API 层需要区分对象与集合**：因此把 `PTR` 细分为 `object` / `set`，且从不暴露 `PTR` 本身；写接口则用 `raw` / `ref` / `null` 字符串声明类型。
+- `api_value_type_t` 中 `RAW=0`、`NULL=2` 与存储标签数值相同仅为映射方便，两套表示属于不同域，禁止相互强转。完整说明见 [API 参考 - 类型系统](./API_REFERENCE.md#类型系统存储标签-vs-api-类型)。
 
 ### 4.4 指针表示
 

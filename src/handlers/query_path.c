@@ -87,9 +87,6 @@ static bool tag_to_api_type(uint8_t tag, api_value_type_t *out) {
   case LMJCORE_VALUE_TYPE_NULL:
     *out = VALUE_TYPE_NULL;
     return true;
-  case LMJCORE_VALUE_TYPE_PTR:
-    *out = VALUE_TYPE_REF; // 具体 obj/set 由引用载荷首字节决定
-    return true;
   default:
     return false;
   }

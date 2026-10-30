@@ -340,20 +340,22 @@ int handle_obj_member_put(void *params, void *cbdata) {
     RETURN_ERROR_INVALID_PARAM(response);
   }
 
-  // 解析请求体获取 value
+  // 解析请求体：{"value": string, "type": "raw"|"ref"|"null"}
   cJSON *body = cJSON_Parse(hp->body);
   if (!body) {
     RETURN_ERROR_BODY_PARSE(response);
   }
 
-  cJSON *value_item = cJSON_GetObjectItemCaseSensitive(body, "value");
-  if (!value_item || !cJSON_IsString(value_item)) {
+  const char *value_str = NULL;
+  size_t value_len = 0;
+  int type = LMJCORE_VALUE_TYPE_RAW;
+  if (handle_parse_typed_value(body, &value_str, &value_len, &type) !=
+      LMJCORE_SUCCESS) {
     cJSON_Delete(body);
-    RETURN_ERROR_BODY_PARSE(response);
+    return json_response_error(response, HTTP_STATUS_BAD_REQUEST,
+                               "Request body must be {\"value\": string, "
+                               "\"type\": \"raw\"|\"ref\"|\"null\"}");
   }
-
-  const char *value_str = value_item->valuestring;
-  size_t value_len = strlen(value_str);
 
   // 转换指针
   lmjcore_ptr obj_ptr;
@@ -404,8 +406,8 @@ int handle_obj_member_put(void *params, void *cbdata) {
   }
 
   size_t encoded_len = 0;
-  int rc = lmjcore_encode_value(value_str, value_len, encoded_value, encoded_size,
-                            &encoded_len);
+  int rc = lmjcore_encode_value(value_str, value_len, type, encoded_value,
+                                encoded_size, &encoded_len);
 
   if (rc != LMJCORE_SUCCESS) {
     if (auto_commit) {
@@ -610,11 +612,12 @@ int handle_obj_del(void *params, void *cbdata) {
  * @brief POST /obj/init - 在同一事务内创建对象并填充成员值（支持嵌套创建）
  *
  * 请求体直接为 JSON 对象：{ "<成员名>": <任意 JSON 值>, ... }
- * 成员值由嵌套工具统一处理：
+ * 成员值由嵌套工具统一处理（不做类型推断）：
  *   - JSON object -> 同一事务内创建嵌套 obj（存 REF）
  *   - JSON array  -> 同一事务内创建嵌套 set（存 REF）
- *   - JSON string -> 自动识别：01/02 开头 34 位 -> REF；"" 或 "null" -> null；其余 -> raw
- *   - JSON null   -> null；number/bool -> raw（其 JSON 文本）
+ *   - JSON null   -> null
+ *   - JSON string -> raw（原样存储，即使内容形似指针）
+ *   - JSON number/boolean -> raw（其 JSON 文本）
  *
  * 成功：HTTP 201，返回 {"ptr":"...","member_count":N}
  * 失败：自动回滚并返回失败原因 {"error":"..."}（含逐层路径）；

@@ -64,6 +64,32 @@ LMJCore 使用 **17 字节全局唯一指针** 标识所有实体：
 | **访问** | 通过成员名点查 | 遍历或判断存在性 |
 | **典型场景** | 配置、用户信息、文档 | 标签、权限组、唯一值列表 |
 
+### 类型系统：存储标签 vs API 类型
+
+代码中同时存在两套「类型」表示，分别服务于**存储编码**与**对外 API**，属于不同层次，不能互相替代：
+
+| 层次 | 表示 | 取值 | 出现位置 |
+|------|------|------|----------|
+| 存储编码 | `LMJCORE_VALUE_TYPE_*` 宏 | `RAW=0x00`、`PTR=0x01`、`NULL=0x02` | 每个值落库时的**首字节** |
+| API 呈现 | `api_value_type_t` 枚举 | `raw`、`null`、`object`、`set` | 响应 JSON 的 `type` 字段 |
+
+不能合并成一套的原因：
+
+1. **存储层只区分「是不是指针」**：对象引用和集合引用落库时都是 `PTR(0x01)`，真正的 obj/set 由 17 字节指针载荷的首字节（`01`/`02`）决定。存储层因此**不需要** `object` / `set`，只需要 `PTR`。
+2. **API 层需要区分对象与集合**：调用方必须知道引用指向对象还是集合，因此把 `PTR` 拆成 `object`、`set` 两个对外类型；API 层**从不暴露** `PTR` 本身。
+3. 两套类型是「多对一」映射：
+
+   | 存储标签 | API 类型 |
+   |----------|----------|
+   | `RAW` | `raw` |
+   | `NULL` | `null` |
+   | `PTR`（载荷首字节 `01`） | `object` |
+   | `PTR`（载荷首字节 `02`） | `set` |
+
+4. **写入用字符串，读回用枚举**：写接口（`PUT`、集合增删）的 `type` 取 `raw` / `ref` / `null`，其中 `ref` 对应存储标签 `PTR`；读接口再按指针载荷细分为 `object` / `set`。
+
+> `api_value_type_t` 中 `VALUE_TYPE_RAW=0`、`VALUE_TYPE_NULL=2` 与存储标签数值相同，只是为映射方便；`VALUE_TYPE_OBJECT=4`、`VALUE_TYPE_SET=3` 是纯 API 概念，而 `PTR=1` 只存在于存储层。**两套枚举属于不同域，不要相互强转。**
+
 ### 存储模型
 
 LMJCore 使用两个 LMDB 数据库协同工作：
@@ -108,7 +134,7 @@ LMJCore 中的集合是**无序集合**，具有以下特性：
 | `GET` | `/batch` | 只读事务 | 仅 `GET` |
 | `POST` | `/batch` | 写事务 | `GET`/`PUT`/`POST`/`DELETE` |
 
-### 15. GET /batch - 只读批量操作
+### 17. GET /batch - 只读批量操作
 
 **请求**
 ```http
@@ -144,7 +170,7 @@ Content-Type: application/json
 
 ---
 
-### 16. POST /batch - 写操作批量操作
+### 18. POST /batch - 写操作批量操作
 
 **请求**
 ```http
@@ -156,7 +182,7 @@ Content-Type: application/json
     {
       "method": "PUT",
       "path": "/obj/01abc123.../name",
-      "body": {"value": "Alice"}
+      "body": {"value": "Alice", "type": "raw"}
     },
     {
       "method": "GET",
@@ -180,7 +206,7 @@ Content-Type: application/json
 |------|------|------|
 | `method` | string | HTTP 方法：`GET`、`PUT`、`POST`、`DELETE` |
 | `path` | string | 完整路径，如 `/obj/{ptr}`、`/obj/{ptr}/{member}`、`/set/{ptr}` |
-| `body` | object | 可选，仅 `PUT`/`POST` 需要，格式 `{"value": "..."}` |
+| `body` | object/array | 可选，原样透传给目标端点。`PUT` / `DELETE` 需为 `{"value": "...", "type": "raw"\|"ref"\|"null"}`；`POST /obj/init`、`POST /set/init` 可传任意 JSON |
 
 **成功响应（GET /batch 和 POST /batch 相同）**
 ```http
@@ -251,12 +277,12 @@ Content-Type: application/json
     {
       "method": "PUT",
       "path": "/obj/01abc123def456789012345678901234/name",
-      "body": {"value": "Alice"}
+      "body": {"value": "Alice", "type": "raw"}
     },
     {
       "method": "PUT",
       "path": "/obj/01abc123def456789012345678901234/age",
-      "body": {"value": "30"}
+      "body": {"value": "30", "type": "raw"}
     },
     {
       "method": "GET",
@@ -277,8 +303,8 @@ curl -X POST http://localhost:8080/batch \
   -H "Content-Type: application/json" \
   -d '{
     "operations": [
-      {"method": "PUT", "path": "/obj/01abc123.../name", "body": {"value": "Alice"}},
-      {"method": "PUT", "path": "/obj/01abc123.../age", "body": {"value": "30"}}
+      {"method": "PUT", "path": "/obj/01abc123.../name", "body": {"value": "Alice", "type": "raw"}},
+      {"method": "PUT", "path": "/obj/01abc123.../age", "body": {"value": "30", "type": "raw"}}
     ]
   }'
 ```
@@ -369,11 +395,11 @@ Content-Type: application/json
     {
       "name": "profile",
       "value": "01def456789012345678901234567890",
-      "type": "ref"
+      "type": "object"
     },
     {
       "name": "email",
-      "value": null,
+      "value": "null",
       "type": "null"
     }
   ],
@@ -422,8 +448,9 @@ Content-Type: application/json
 | type | 说明 | value 格式 |
 |------|------|-----------|
 | `raw` | 原始数据 | 字符串 |
-| `ref` | 指针引用 | 34 位十六进制字符串 |
-| `null` | 空值 | null |
+| `object` | 对象引用 | 以 `01` 开头的 34 位十六进制指针 |
+| `set` | 集合引用 | 以 `02` 开头的 34 位十六进制指针 |
+| `null` | 空值 | 字符串 `"null"` |
 
 **错误响应**
 ```http
@@ -445,7 +472,8 @@ PUT /obj/{ptr}/{member}
 Content-Type: application/json
 
 {
-  "value": "string value or 01abc123... pointer"
+  "value": "string value or 01abc123... pointer",
+  "type": "raw"
 }
 ```
 
@@ -456,9 +484,10 @@ Content-Type: application/json
 | `member` | string | 成员名 |
 
 **请求体**
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `value` | string | 要设置的值（原始数据或指针字符串） |
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `value` | string | 是 | 要设置的值 |
+| `type` | string | 是 | 值的类型：`raw`（原始数据）、`ref`（指针引用）、`null`（空值） |
 
 **成功响应**
 ```http
@@ -471,10 +500,11 @@ Content-Type: application/json
 ```
 
 **说明**
-- 自动识别值类型：
-  - 34 位十六进制且以 `01` 或 `02` 开头 → 指针引用
-  - `null` → 空值
-  - 其他 → 原始数据
+- `type` 为必填字段，不再自动推断类型：
+  - `raw` → 原样存储为原始数据（即使内容形似指针）
+  - `ref` → 存储为指针引用，`value` 必须是合法的 34 位十六进制指针串，否则返回 400
+  - `null` → 存储为空值；`value` 内容被忽略（字段仍须为字符串）
+- 缺失 `type` 或取值非法返回 400
 
 ---
 
@@ -543,7 +573,6 @@ Content-Type: application/json
 {
   "username": "alice",
   "age": 30,
-  "friend": "01abc123def456789012345678901234",
   "email": null,
   "note": "",
   "profile": {"city": "北京", "tags": ["a", "b"]},
@@ -555,17 +584,17 @@ Content-Type: application/json
 - 请求体直接是**一个 JSON 对象**（成员映射，键即成员名），不再需要 `members` 包装字段
 - 空对象 `{}` 允许（等价于 `POST /obj`，返回空对象指针）
 
-**成员值规则**（由统一的嵌套工具处理）：
+**成员值规则**（由统一的嵌套工具处理，**不做类型推断**）：
 | JSON 值 | 存储类型 | 说明 |
 |---------|----------|------|
-| JSON object | `ref` → 嵌套 obj | 同一事务内递归创建嵌套对象并填充，成员值指向其指针 |
-| JSON array | `ref` → 嵌套 set | 同一事务内递归创建嵌套集合并添加元素，成员值指向其指针 |
-| 34 位十六进制且以 `01`/`02` 开头的字符串 | `ref` | 引用已存在的对象/集合 |
-| 空字符串 `""`、字面量 `"null"`、JSON `null` | `null` | 空值 |
-| 其他字符串 | `raw` | 原始数据 |
+| JSON object | `object`（引用） | 同一事务内递归创建嵌套对象并填充，成员值指向其指针 |
+| JSON array | `set`（引用） | 同一事务内递归创建嵌套集合并添加元素，成员值指向其指针 |
+| JSON `null` | `null` | 空值 |
+| JSON string | `raw` | 原样存储为原始数据（**即使内容形似指针**；空串存为空原始数据） |
 | JSON number | `raw` | 按其 JSON 数字文本存储（如 `21` → 存 `"21"`） |
 | JSON boolean | `raw` | `true` → `"true"`，`false` → `"false"` |
 
+- init 不做类型推断：所有标量一律按原始数据存储。若需建立对已有实体的引用，请先用 `PUT /obj/{ptr}/{member}`（`"type": "ref"`）设置
 - 嵌套深度上限 64，超出返回 400
 - 嵌套创建的子实体失败时与整体一起回滚，不留任何半成品
 
@@ -598,7 +627,7 @@ Content-Type: application/json
 **说明**
 - **原子性**: 创建对象、全部成员填充与所有嵌套子实体创建在**同一个事务**内完成
   - 任一环节失败（成员名超长、嵌套过深、事务超时等）→ 事务整体**回滚**，不留下任何对象/集合
-  - 成功后指针才对外可见，可直接用于 `GET /obj/{ptr}`；嵌套对象/集合可通过其 `ref` 值继续 `GET`
+  - 成功后指针才对外可见，可直接用于 `GET /obj/{ptr}`；嵌套对象/集合可通过其 `object`/`set` 类型的值继续 `GET`
 - **返回指针**: 成功响应中的 `ptr` 即新对象指针（前缀 `01`），`member_count` 为根对象实际写入的成员数量
 - **事务复用**: 当通过 `POST /batch` 的共享事务调用时，本接口不自行提交/回滚，交由批量事务统一处理
 - **版本变更（1.3.0）**: 请求体由 `{"members":{...}}` 改为直接的对象映射；成员值类型由"仅字符串/null"扩展为任意 JSON（对象/数组自动嵌套创建）
@@ -784,10 +813,10 @@ Content-Type: application/json
     },
     {
       "value": "01abc123def456789012345678901234",
-      "type": "ref"
+      "type": "object"
     },
     {
-      "value": null,
+      "value": "null",
       "type": "null"
     }
   ],
@@ -809,7 +838,8 @@ POST /set/{ptr}/elements
 Content-Type: application/json
 
 {
-  "value": "element value"
+  "value": "element value",
+  "type": "raw"
 }
 ```
 
@@ -819,9 +849,10 @@ Content-Type: application/json
 | `ptr` | string | 集合指针 |
 
 **请求体**
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `value` | string | 要添加的元素值 |
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `value` | string | 是 | 要添加的元素值 |
+| `type` | string | 是 | 元素类型：`raw` / `ref` / `null`（不自动推断，缺失或非法返回 400） |
 
 **成功响应**
 ```http
@@ -853,7 +884,8 @@ DELETE /set/{ptr}/elements
 Content-Type: application/json
 
 {
-  "value": "element value"
+  "value": "element value",
+  "type": "raw"
 }
 ```
 
@@ -863,9 +895,10 @@ Content-Type: application/json
 | `ptr` | string | 集合指针 |
 
 **请求体**
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `value` | string | 要删除的元素值 |
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `value` | string | 是 | 要删除的元素值 |
+| `type` | string | 是 | 元素类型：`raw` / `ref` / `null`（不自动推断，缺失或非法返回 400） |
 
 **成功响应**
 ```http
@@ -877,34 +910,9 @@ Content-Type: application/json
 }
 ```
 
-**⚠️ 重要说明：删除最后一个元素会导致集合被删除**
+**⚠️ 删除最后一个元素会导致集合被删除**
 
-由于 LMJCore 基于 LMDB 存储引擎，集合的元素存储在 LMDB 的 `set` 空间中。LMDB 有一个关键特性：
-
-> **当删除一个键的所有值时，该键会被 LMDB 自动删除（不允许空键）。**
-
-这意味着：
-- 删除集合的**最后一个元素**后，该集合指针在 `set` 中将不存在
-- 集合的存在性由 `set` 定义，因此**集合本身被视为已删除**
-- 后续对该集合的访问将返回 404 错误
-
-**示例**：
-```js
-// 初始状态：集合有一个元素
-["apple"]
-
-// 删除最后一个元素
-DELETE /set/02def456.../elements
-{ "value": "apple" }
-
-// 结果：集合不再存在
-GET /set/02def456...  // → 404 Not Found
-```
-
-**建议**：
-- 避免删除集合的最后一个元素
-- 如需清空集合，可保留一个占位元素
-- 在应用层追踪集合的状态，避免意外删除
+规则与对象相同：`set` 库基于 `MDB_DUPSORT` 且不允许空键，删除最后一个关联项会使该键被 LMDB 自动删除，集合随之消失（后续访问返回 404）。详见「[删除成员](#5-删除成员)」中的说明。
 
 ---
 
@@ -963,17 +971,17 @@ Content-Type: application/json
 - 请求体直接是**一个 JSON 数组**（元素列表），不再需要 `elements` 包装字段
 - 空数组 `[]` 允许（等价于 `POST /set`，返回空集合指针）
 
-**元素值规则**（由统一的嵌套工具处理）：
+**元素值规则**（由统一的嵌套工具处理，**不做类型推断**）：
 | JSON 值 | 存储类型 | 说明 |
 |---------|----------|------|
-| JSON object | `ref` → 嵌套 obj | 同一事务内递归创建嵌套对象并填充，元素指向其指针 |
-| JSON array | `ref` → 嵌套 set | 同一事务内递归创建嵌套集合并添加元素，元素指向其指针 |
-| 34 位十六进制且以 `01`/`02` 开头的字符串 | `ref` | 引用已存在的对象/集合 |
-| 空字符串 `""`、字面量 `"null"`、JSON `null` | `null` | 空值 |
-| 其他字符串 | `raw` | 原始数据 |
+| JSON object | `object`（引用） | 同一事务内递归创建嵌套对象并填充，元素指向其指针 |
+| JSON array | `set`（引用） | 同一事务内递归创建嵌套集合并添加元素，元素指向其指针 |
+| JSON `null` | `null` | 空值 |
+| JSON string | `raw` | 原样存储为原始数据（**即使内容形似指针**；空串存为空原始数据） |
 | JSON number | `raw` | 按其 JSON 数字文本存储（如 `21` → 存 `"21"`） |
 | JSON boolean | `raw` | `true` → `"true"`，`false` → `"false"` |
 
+- init 不做类型推断：所有标量一律按原始数据存储。若需建立对已有实体的引用，请用 `POST /set/{ptr}/elements`（`"type": "ref"`）添加
 - 嵌套深度上限 64，超出返回 400
 - 嵌套创建的子实体失败时与整体一起回滚，不留任何半成品
 - **去重语义**：集合自动去重，请求中重复的元素（包括重复的空值/`null`）不报错
@@ -1007,7 +1015,7 @@ Content-Type: application/json
 **说明**
 - **原子性**: 创建集合、全部元素添加与所有嵌套子实体创建在**同一个事务**内完成
   - 任一环节失败（元素超长、嵌套过深、事务超时等）→ 事务整体**回滚**，不留下任何集合/对象
-  - 成功后指针才对外可见，可直接用于 `GET /set/{ptr}`；嵌套对象/集合可通过其 `ref` 值继续 `GET`
+  - 成功后指针才对外可见，可直接用于 `GET /set/{ptr}`；嵌套对象/集合可通过其 `object`/`set` 类型的值继续 `GET`
 - **返回指针**: 成功响应中的 `ptr` 即新集合指针（前缀 `02`），`element_count` 为该集合实际包含的去重后元素数量
 - **事务复用**: 当通过 `POST /batch` 的共享事务调用时，本接口不自行提交/回滚，交由批量事务统一处理
 - **版本变更（1.3.0）**: 请求体由 `{"elements":[...]}` 改为直接的 JSON 数组；元素值类型由"仅字符串/null"扩展为任意 JSON（对象/数组自动嵌套创建）
@@ -1141,15 +1149,17 @@ Content-Type: application/json
 
 ### 值存储格式
 
-所有值统一添加 1 字节类型标记：
+所有值落库时统一添加 1 字节**存储标签**，对应上文「[类型系统](#类型系统存储标签-vs-api-类型)」中的 `LMJCORE_VALUE_TYPE_*`：
 
 ```
-┌──────────────────────────────────────────┐
-│ 原始数据：  [0x00][data...]              │
-│ 指针引用：  [0x01][17B 指针]             │
-│ 空值：      [0x02]                       │
-└──────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│ 原始数据 RAW  ：  [0x00][data...]                     │
+│ 指针引用 PTR  ：  [0x01][17B 指针（首字节 01/02）]    │
+│ 空值     NULL ：  [0x02]                              │
+└──────────────────────────────────────────────────────┘
 ```
+
+对外响应不直接暴露存储标签，而是经 `api_value_type_t` 转换为 `raw` / `null` / `object` / `set`。
 
 ---
 

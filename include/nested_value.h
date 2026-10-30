@@ -1,6 +1,6 @@
 // include/nested_value.h - 嵌套值统一创建工具
 // 供 obj/init、set/init 等处理器共用：把任意 JSON 节点写入当前事务，
-// 标量自动识别存储类型，对象/数组递归创建嵌套 obj/set 实体并返回指针引用。
+// 标量一律按原始数据（null 存空值）存储，对象/数组递归创建嵌套 obj/set 实体并返回指针引用。
 #ifndef NESTED_VALUE_H
 #define NESTED_VALUE_H
 
@@ -28,11 +28,11 @@ int lmjcore_nested_member_name_check(const char *name, size_t name_len,
 /**
  * @brief 将任意 JSON 节点转换为可存储的编码值（同一事务内完成）
  *
- * 类型映射（与值编码规则一致）：
+ * 类型映射（init 不做类型推断，标量一律 raw）：
  *   - JSON object -> 新建嵌套 obj，逐个递归填充成员，返回 REF(该 obj 指针)
  *   - JSON array  -> 新建嵌套 set，逐个递归添加元素，返回 REF(该 set 指针)
- *   - JSON string -> 沿用自动识别：34 位且 01/02 开头 -> REF；"" 或 "null" -> null；其余 -> raw
  *   - JSON null   -> null
+ *   - JSON string -> raw（原样存储，即使内容形似指针）
  *   - JSON number -> raw（按其 JSON 数字文本存储，如 21 -> "21"）
  *   - JSON true/false -> raw（"true"/"false"）
  *

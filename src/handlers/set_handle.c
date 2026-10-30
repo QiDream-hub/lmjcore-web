@@ -207,20 +207,22 @@ int handle_set_add(void *params, void *cbdata) {
     RETURN_ERROR_MISSING_PARAM("ptr", response);
   }
 
-  // 解析请求体获取 value
+  // 解析请求体：{"value": string, "type": "raw"|"ref"|"null"}
   cJSON *body = cJSON_Parse(hp->body);
   if (!body) {
     RETURN_ERROR_BODY_PARSE(response);
   }
 
-  cJSON *value_item = cJSON_GetObjectItemCaseSensitive(body, "value");
-  if (!value_item || !cJSON_IsString(value_item)) {
+  const char *value_str = NULL;
+  size_t value_len = 0;
+  int type = LMJCORE_VALUE_TYPE_RAW;
+  if (handle_parse_typed_value(body, &value_str, &value_len, &type) !=
+      LMJCORE_SUCCESS) {
     cJSON_Delete(body);
-    RETURN_ERROR_BODY_PARSE(response);
+    return json_response_error(response, HTTP_STATUS_BAD_REQUEST,
+                               "Request body must be {\"value\": string, "
+                               "\"type\": \"raw\"|\"ref\"|\"null\"}");
   }
-
-  const char *value_str = value_item->valuestring;
-  size_t value_len = strlen(value_str);
 
   // 转换指针
   lmjcore_ptr set_ptr;
@@ -271,8 +273,8 @@ int handle_set_add(void *params, void *cbdata) {
   }
 
   size_t encoded_len = 0;
-  int rc = lmjcore_encode_value(value_str, value_len, encoded_value, encoded_size,
-                            &encoded_len);
+  int rc = lmjcore_encode_value(value_str, value_len, type, encoded_value,
+                                encoded_size, &encoded_len);
 
   if (rc != LMJCORE_SUCCESS) {
     if (auto_commit) {
@@ -334,20 +336,22 @@ int handle_set_remove(void *params, void *cbdata) {
     RETURN_ERROR_MISSING_PARAM("ptr", response);
   }
 
-  // 解析请求体获取 value
+  // 解析请求体：{"value": string, "type": "raw"|"ref"|"null"}
   cJSON *body = cJSON_Parse(hp->body);
   if (!body) {
     RETURN_ERROR_BODY_PARSE(response);
   }
 
-  cJSON *value_item = cJSON_GetObjectItemCaseSensitive(body, "value");
-  if (!value_item || !cJSON_IsString(value_item)) {
+  const char *value_str = NULL;
+  size_t value_len = 0;
+  int type = LMJCORE_VALUE_TYPE_RAW;
+  if (handle_parse_typed_value(body, &value_str, &value_len, &type) !=
+      LMJCORE_SUCCESS) {
     cJSON_Delete(body);
-    RETURN_ERROR_BODY_PARSE(response);
+    return json_response_error(response, HTTP_STATUS_BAD_REQUEST,
+                               "Request body must be {\"value\": string, "
+                               "\"type\": \"raw\"|\"ref\"|\"null\"}");
   }
-
-  const char *value_str = value_item->valuestring;
-  size_t value_len = strlen(value_str);
 
   // 转换指针
   lmjcore_ptr set_ptr;
@@ -398,8 +402,8 @@ int handle_set_remove(void *params, void *cbdata) {
   }
 
   size_t encoded_len = 0;
-  int rc = lmjcore_encode_value(value_str, value_len, encoded_value, encoded_size,
-                            &encoded_len);
+  int rc = lmjcore_encode_value(value_str, value_len, type, encoded_value,
+                                encoded_size, &encoded_len);
 
   if (rc != LMJCORE_SUCCESS) {
     if (auto_commit) {
@@ -514,11 +518,12 @@ int handle_set_del(void *params, void *cbdata) {
  * @brief POST /set/init - 在同一事务内创建集合并添加元素值（支持嵌套创建）
  *
  * 请求体直接为 JSON 数组：[ <任意 JSON 值>, ... ]
- * 元素值由嵌套工具统一处理：
+ * 元素值由嵌套工具统一处理（不做类型推断）：
  *   - JSON object -> 同一事务内创建嵌套 obj（存 REF）
  *   - JSON array  -> 同一事务内创建嵌套 set（存 REF）
- *   - JSON string -> 自动识别：01/02 开头 34 位 -> REF；"" 或 "null" -> null；其余 -> raw
- *   - JSON null   -> null；number/bool -> raw（其 JSON 文本）
+ *   - JSON null   -> null
+ *   - JSON string -> raw（原样存储，即使内容形似指针）
+ *   - JSON number/boolean -> raw（其 JSON 文本）
  * 集合自动去重：请求内重复元素不报错。
  *
  * 成功：HTTP 201，返回 {"ptr":"...","element_count":N}（去重后真实数量）

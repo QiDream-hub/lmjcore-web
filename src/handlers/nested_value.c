@@ -73,7 +73,7 @@ int lmjcore_nested_member_name_check(const char *name, size_t name_len,
 // ==================== 递归编码 ====================
 
 /**
- * @brief 标量节点编码（string 自动识别；number/bool 转文本后存 raw；null 存空值）
+ * @brief 标量节点编码（string/number/bool 一律存 raw；null 存空值）
  */
 static int encode_leaf_value(const cJSON *node, char *err_buf,
                              size_t err_buf_size, uint8_t **out_enc,
@@ -81,10 +81,12 @@ static int encode_leaf_value(const cJSON *node, char *err_buf,
   const char *text = NULL;
   size_t text_len = 0;
   char num_buf[64];
+  int type = LMJCORE_VALUE_TYPE_RAW;
 
   if (cJSON_IsNull(node)) {
     text = "";
     text_len = 0;
+    type = LMJCORE_VALUE_TYPE_NULL;
   } else if (cJSON_IsString(node)) {
     text = node->valuestring ? node->valuestring : "";
     text_len = strlen(text);
@@ -103,20 +105,15 @@ static int encode_leaf_value(const cJSON *node, char *err_buf,
     return LMJCORE_ERROR_INVALID_PARAM;
   }
 
-  // 分配编码缓冲区并复用自动识别编码（raw/ref/null）
-  size_t enc_cap = 1 + LMJCORE_PTR_LEN + text_len + 16;
-  uint8_t *enc = (uint8_t *)malloc(enc_cap);
+  size_t enc_len = (type == LMJCORE_VALUE_TYPE_NULL) ? 1 : 1 + text_len;
+  uint8_t *enc = (uint8_t *)malloc(enc_len);
   if (!enc) {
     set_reason(err_buf, err_buf_size, "out of memory");
     return LMJCORE_ERROR_MEMORY_ALLOCATION_FAILED;
   }
-
-  size_t enc_len = 0;
-  int rc = lmjcore_encode_value(text, text_len, enc, enc_cap, &enc_len);
-  if (rc != LMJCORE_SUCCESS) {
-    free(enc);
-    set_reason(err_buf, err_buf_size, "%s", lmjcore_strerror(rc));
-    return rc;
+  enc[0] = (uint8_t)type;
+  if (type == LMJCORE_VALUE_TYPE_RAW && text_len > 0) {
+    memcpy(enc + 1, text, text_len);
   }
 
   *out_enc = enc;

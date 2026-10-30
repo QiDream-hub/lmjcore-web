@@ -125,7 +125,46 @@ int lmjcore_ptr_to_hex(const uint8_t *ptr, char *str_out) {
 
 // ==================== 值编解码工具 ====================
 
-int lmjcore_encode_value(const char *value_str, size_t value_len,
+int encode_type_from_string(const char *type_str) {
+  if (!type_str) {
+    return -1;
+  }
+  if (strcmp(type_str, "raw") == 0) {
+    return LMJCORE_VALUE_TYPE_RAW;
+  }
+  if (strcmp(type_str, "ref") == 0) {
+    return LMJCORE_VALUE_TYPE_PTR;
+  }
+  if (strcmp(type_str, "null") == 0) {
+    return LMJCORE_VALUE_TYPE_NULL;
+  }
+  return -1;
+}
+
+int handle_parse_typed_value(const cJSON *body, const char **out_value,
+                             size_t *out_value_len, int *out_type) {
+  if (!body || !out_value || !out_value_len || !out_type) {
+    return LMJCORE_ERROR_INVALID_PARAM;
+  }
+
+  const cJSON *value_item = cJSON_GetObjectItemCaseSensitive(body, "value");
+  const cJSON *type_item = cJSON_GetObjectItemCaseSensitive(body, "type");
+  if (!cJSON_IsString(value_item) || !cJSON_IsString(type_item)) {
+    return LMJCORE_ERROR_INVALID_PARAM;
+  }
+
+  int type = encode_type_from_string(type_item->valuestring);
+  if (type < 0) {
+    return LMJCORE_ERROR_INVALID_PARAM;
+  }
+
+  *out_value = value_item->valuestring;
+  *out_value_len = strlen(value_item->valuestring);
+  *out_type = type;
+  return LMJCORE_SUCCESS;
+}
+
+int lmjcore_encode_value(const char *value_str, size_t value_len, int type,
                          uint8_t *out_buf, size_t out_buf_size,
                          size_t *out_len) {
   if (!value_str || !out_buf || !out_len) {
@@ -136,37 +175,39 @@ int lmjcore_encode_value(const char *value_str, size_t value_len,
     return LMJCORE_ERROR_BUFFER_TOO_SMALL;
   }
 
-  // 检查是否为空值
-  if (value_len == 0 || (value_len == 4 && strcmp(value_str, "null") == 0)) {
+  switch (type) {
+  case LMJCORE_VALUE_TYPE_NULL:
     out_buf[0] = LMJCORE_VALUE_TYPE_NULL;
     *out_len = 1;
     return LMJCORE_SUCCESS;
-  }
 
-  // 检查是否为指针引用（34 位十六进制，以 01 或 02 开头）
-  if (value_len == LMJCORE_PTR_STRING_LEN) {
-    uint8_t ptr[LMJCORE_PTR_LEN];
-    if (lmjcore_ptr_from_hex(value_str, ptr) == 0) {
-      if (ptr[0] == LMJCORE_OBJ || ptr[0] == LMJCORE_SET) {
-        out_buf[0] = LMJCORE_VALUE_TYPE_PTR;
-        memcpy(out_buf + 1, ptr, LMJCORE_PTR_LEN);
-        *out_len = 1 + LMJCORE_PTR_LEN;
-        return LMJCORE_SUCCESS;
-      }
+  case LMJCORE_VALUE_TYPE_PTR: {
+    if (value_len != LMJCORE_PTR_STRING_LEN) {
+      return LMJCORE_ERROR_INVALID_PARAM;
     }
+    uint8_t ptr[LMJCORE_PTR_LEN];
+    if (lmjcore_ptr_from_hex(value_str, ptr) != 0 ||
+        (ptr[0] != LMJCORE_OBJ && ptr[0] != LMJCORE_SET)) {
+      return LMJCORE_ERROR_INVALID_PARAM;
+    }
+    out_buf[0] = LMJCORE_VALUE_TYPE_PTR;
+    memcpy(out_buf + 1, ptr, LMJCORE_PTR_LEN);
+    *out_len = 1 + LMJCORE_PTR_LEN;
+    return LMJCORE_SUCCESS;
   }
 
-  // 默认为原始数据
-  // 检查整数溢出：value_len 不能太大
-  if (value_len > out_buf_size - 1) {
-    return LMJCORE_ERROR_BUFFER_TOO_SMALL;
+  case LMJCORE_VALUE_TYPE_RAW:
+    if (value_len > out_buf_size - 1) {
+      return LMJCORE_ERROR_BUFFER_TOO_SMALL;
+    }
+    out_buf[0] = LMJCORE_VALUE_TYPE_RAW;
+    memcpy(out_buf + 1, value_str, value_len);
+    *out_len = 1 + value_len;
+    return LMJCORE_SUCCESS;
+
+  default:
+    return LMJCORE_ERROR_INVALID_PARAM;
   }
-
-  out_buf[0] = LMJCORE_VALUE_TYPE_RAW;
-  memcpy(out_buf + 1, value_str, value_len);
-  *out_len = 1 + value_len;
-
-  return LMJCORE_SUCCESS;
 }
 
 // ==================== 值编解码工具 ====================
@@ -175,8 +216,6 @@ const char *value_type_to_string(api_value_type_t type) {
   switch (type) {
   case VALUE_TYPE_RAW:
     return "raw";
-  case VALUE_TYPE_REF:
-    return "ref";
   case VALUE_TYPE_SET:
     return "set";
   case VALUE_TYPE_OBJECT:
@@ -225,17 +264,15 @@ int lmjcore_decode_value(const uint8_t *data, size_t data_len, char **out_str,
     } else if (ptr_type == LMJCORE_SET) {
       *out_type = VALUE_TYPE_SET;
     } else {
-      *out_type = VALUE_TYPE_REF;
+      free(*out_str);
+      *out_str = NULL;
+      return LMJCORE_ERROR_INVALID_TYPE;
     }
     return LMJCORE_SUCCESS;
 
   case LMJCORE_VALUE_TYPE_RAW: {
-    // 检查整数溢出：data_len 必须至少为 2（1 字节类型标记 + 至少 1 字节数据）
-    if (data_len < 2) {
-      return LMJCORE_ERROR_INVALID_PARAM;
-    }
-    // 防止溢出：检查 data_len - 1 是否合理
-    size_t alloc_size = data_len;  // 多分配 1 字节给 '\0'
+    // 允许零长度原始数据（如空字符串）：[0x00]（仅类型标记）
+    size_t alloc_size = data_len; // 多分配 1 字节给 '\0'
     *out_str = (char *)malloc(alloc_size);
     if (!*out_str) {
       return LMJCORE_ERROR_MEMORY_ALLOCATION_FAILED;

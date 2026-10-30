@@ -129,19 +129,11 @@ static int execute_operation(handle_params_t *hp, const cJSON *op_obj,
   params.params = param_storage;
   params.count = param_count;
 
-  // 解析 body（如果有）：批量协议仅透传 {"value":"..."} 形式的请求体
+  // 原样转发 body（PUT/DELETE 需含 value+type，init 可传任意 JSON）
   char *body_str = NULL;
   cJSON *body_item = cJSON_GetObjectItemCaseSensitive(op_obj, "body");
-  if (body_item && cJSON_IsObject(body_item)) {
-    cJSON *value_item = cJSON_GetObjectItemCaseSensitive(body_item, "value");
-    if (value_item && cJSON_IsString(value_item)) {
-      cJSON *body_obj = cJSON_CreateObject();
-      if (body_obj &&
-          cJSON_AddStringToObject(body_obj, "value", value_item->valuestring)) {
-        body_str = cJSON_PrintUnformatted(body_obj);
-      }
-      cJSON_Delete(body_obj);
-    }
+  if (body_item && !cJSON_IsNull(body_item)) {
+    body_str = cJSON_PrintUnformatted(body_item);
   }
 
   // 构建 handle_params

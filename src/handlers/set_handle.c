@@ -20,51 +20,33 @@ int handle_set_create(void *params, void *cbdata) {
     RETURN_ERROR_INVALID_PARAM(response);
   }
 
-  // 检查是否已有事务（批量操作场景）
   lmjcore_txn *txn = NULL;
-  int auto_commit = 1;  // 是否自动提交事务
+  int txn_owned = 0;
+  int rc = -1;
 
-  if (hp->txn && !hp->auto_manage_txn) {
-    // 使用已有事务（批量操作场景）
-    txn = hp->txn;
-    auto_commit = 0;
-  } else {
-    // 开启写事务
-    int rc = lmjcore_txn_begin(hp->env, NULL, 0, &txn);
-    if (rc != LMJCORE_SUCCESS || !txn) {
-      RETURN_ERROR_TXN_FAILED("begin", response);
-    }
-  }
-
-  // 检查事务超时
-  CHECK_TXN_TIMEOUT(hp, response, txn);
+  TXN_BEGIN(txn, hp, 0, txn_owned, response, cleanup);
+  TXN_CHECK_TIMEOUT(hp, txn, txn_owned, response, cleanup);
 
   // 创建集合
   lmjcore_ptr set_ptr;
-  int rc = lmjcore_set_create(txn, set_ptr);
+  rc = lmjcore_set_create(txn, set_ptr);
   if (rc != LMJCORE_SUCCESS) {
-    if (auto_commit) {
-      lmjcore_txn_abort(txn);
-    }
-    json_response_lmjcore_error(response, rc);
-    return -1;
+    rc = json_response_lmjcore_error(response, rc);
+    goto cleanup;
   }
 
-  // 提交事务（仅当自动管理时）
-  if (auto_commit) {
-    rc = lmjcore_txn_commit(txn);
-    if (rc != LMJCORE_SUCCESS) {
-      lmjcore_txn_abort(txn);
-      RETURN_ERROR_TXN_FAILED("commit", response);
-    }
-  }
+  TXN_COMMIT(txn, txn_owned, response, cleanup);
 
   // 将指针转换为字符串
   char ptr_str[LMJCORE_PTR_STRING_LEN + 1];
   lmjcore_ptr_to_string(set_ptr, ptr_str, sizeof(ptr_str));
 
   // 构建响应
-  return json_response_set(response, HTTP_STATUS_CREATED, json_new_ptr(ptr_str));
+  rc = json_response_set(response, HTTP_STATUS_CREATED, json_new_ptr(ptr_str));
+
+cleanup:
+  TXN_ABORT(txn, txn_owned);
+  return rc;
 }
 
 int handle_set_get(void *params, void *cbdata) {
@@ -87,32 +69,20 @@ int handle_set_get(void *params, void *cbdata) {
     RETURN_ERROR_INVALID_PTR(response);
   }
 
-  // 检查是否已有事务（批量操作场景）
   lmjcore_txn *txn = NULL;
-  int auto_commit = 1;  // 是否自动提交事务
+  int txn_owned = 0;
+  int rc = -1;
+  uint8_t *result_buf = NULL;
+  cJSON *root = NULL;
 
-  if (hp->txn && !hp->auto_manage_txn) {
-    // 使用已有事务（批量操作场景）
-    txn = hp->txn;
-    auto_commit = 0;
-  } else {
-    // 开启读事务
-    int rc = lmjcore_txn_begin(hp->env, NULL, LMJCORE_TXN_READONLY, &txn);
-    if (rc != LMJCORE_SUCCESS || !txn) {
-      RETURN_ERROR_TXN_FAILED("begin", response);
-    }
-  }
-
-  // 检查事务超时
-  CHECK_TXN_TIMEOUT(hp, response, txn);
+  TXN_BEGIN(txn, hp, LMJCORE_TXN_READONLY, txn_owned, response, cleanup);
+  TXN_CHECK_TIMEOUT(hp, txn, txn_owned, response, cleanup);
 
   // 检查实体是否存在
   int exists = lmjcore_entity_exist(txn, set_ptr);
   if (exists != 1) {
-    if (auto_commit) {
-      lmjcore_txn_abort(txn);
-    }
-    RETURN_ERROR_NOT_FOUND("Set", response);
+    rc = json_response_error(response, HTTP_STATUS_NOT_FOUND, "Set not found");
+    goto cleanup;
   }
 
   // 统计集合大小
@@ -125,26 +95,18 @@ int handle_set_get(void *params, void *cbdata) {
                     element_count * sizeof(lmjcore_descriptor) +
                     total_value_len + 1024;
 
-  uint8_t *result_buf = (uint8_t *)malloc(buf_size);
+  result_buf = (uint8_t *)malloc(buf_size);
   if (!result_buf) {
-    if (auto_commit) {
-      lmjcore_txn_abort(txn);
-    }
-    RETURN_ERROR_NO_MEMORY(response);
+    rc = json_response_error(response, HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                             "Failed to allocate memory");
+    goto cleanup;
   }
 
   lmjcore_result_set *result_head = NULL;
-  int rc = lmjcore_set_get(txn, set_ptr, result_buf, buf_size, &result_head);
-
-  // 读事务完成，仅在自动管理时中止
-  if (auto_commit) {
-    lmjcore_txn_abort(txn);
-  }
-
+  rc = lmjcore_set_get(txn, set_ptr, result_buf, buf_size, &result_head);
   if (rc != LMJCORE_SUCCESS) {
-    free(result_buf);
-    json_response_lmjcore_error(response, rc);
-    return -1;
+    rc = json_response_lmjcore_error(response, rc);
+    goto cleanup;
   }
 
   // 构建 JSON 响应：{"ptr":"...","elements":[{"value","type"}...],"count":N}
@@ -152,10 +114,11 @@ int handle_set_get(void *params, void *cbdata) {
   lmjcore_ptr_to_string(set_ptr, ptr_out, sizeof(ptr_out));
 
   cJSON *elements = NULL;
-  cJSON *root = json_new_entity(ptr_out, "elements", &elements);
+  root = json_new_entity(ptr_out, "elements", &elements);
   if (!root) {
-    free(result_buf);
-    RETURN_ERROR_NO_MEMORY(response);
+    rc = json_response_error(response, HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                             "Failed to allocate memory");
+    goto cleanup;
   }
 
   size_t built_count = 0;
@@ -176,21 +139,27 @@ int handle_set_get(void *params, void *cbdata) {
     free(value_str);
 
     if (!json_array_append(elements, item)) {
-      cJSON_Delete(root);
-      free(result_buf);
-      RETURN_ERROR_NO_MEMORY(response);
+      rc = json_response_error(response, HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                               "Failed to allocate memory");
+      goto cleanup;
     }
     built_count++;
   }
 
   if (json_entity_set_count(root, built_count) != 0) {
-    cJSON_Delete(root);
-    free(result_buf);
-    RETURN_ERROR_NO_MEMORY(response);
+    rc = json_response_error(response, HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                             "Failed to allocate memory");
+    goto cleanup;
   }
 
+  rc = json_response_set(response, HTTP_STATUS_OK, root);
+  root = NULL; // 所有权已转移给响应
+
+cleanup:
+  TXN_ABORT(txn, txn_owned);
+  cJSON_Delete(root);
   free(result_buf);
-  return json_response_set(response, HTTP_STATUS_OK, root);
+  return rc;
 }
 
 int handle_set_add(void *params, void *cbdata) {
@@ -208,7 +177,13 @@ int handle_set_add(void *params, void *cbdata) {
   }
 
   // 解析请求体：{"value": string, "type": "raw"|"ref"|"null"}
-  cJSON *body = cJSON_Parse(hp->body);
+  cJSON *body = NULL;
+  lmjcore_txn *txn = NULL;
+  int txn_owned = 0;
+  int rc = -1;
+  uint8_t *encoded_value = NULL;
+
+  body = cJSON_Parse(hp->body);
   if (!body) {
     RETURN_ERROR_BODY_PARSE(response);
   }
@@ -218,108 +193,68 @@ int handle_set_add(void *params, void *cbdata) {
   int type = LMJCORE_VALUE_TYPE_RAW;
   if (handle_parse_typed_value(body, &value_str, &value_len, &type) !=
       LMJCORE_SUCCESS) {
-    cJSON_Delete(body);
-    return json_response_error(response, HTTP_STATUS_BAD_REQUEST,
-                               "Request body must be {\"value\": string, "
-                               "\"type\": \"raw\"|\"ref\"|\"null\"}");
+    rc = json_response_error(response, HTTP_STATUS_BAD_REQUEST,
+                             "Request body must be {\"value\": string, "
+                             "\"type\": \"raw\"|\"ref\"|\"null\"}");
+    goto cleanup;
   }
 
   // 转换指针
   lmjcore_ptr set_ptr;
   if (lmjcore_ptr_from_string(ptr_str, set_ptr) != LMJCORE_SUCCESS) {
-    cJSON_Delete(body);
-    RETURN_ERROR_INVALID_PTR(response);
+    rc = json_response_error(response, HTTP_STATUS_BAD_REQUEST,
+                             "Invalid pointer format");
+    goto cleanup;
   }
 
-  // 检查是否已有事务（批量操作场景）
-  lmjcore_txn *txn = NULL;
-  int auto_commit = 1;  // 是否自动提交事务
-
-  if (hp->txn && !hp->auto_manage_txn) {
-    // 使用已有事务（批量操作场景）
-    txn = hp->txn;
-    auto_commit = 0;
-  } else {
-    // 开启写事务
-    int rc = lmjcore_txn_begin(hp->env, NULL, 0, &txn);
-    if (rc != LMJCORE_SUCCESS || !txn) {
-      cJSON_Delete(body);
-      RETURN_ERROR_TXN_FAILED("begin", response);
-    }
-  }
-
-  // 检查事务超时
-  CHECK_TXN_TIMEOUT(hp, response, txn);
+  TXN_BEGIN(txn, hp, 0, txn_owned, response, cleanup);
+  TXN_CHECK_TIMEOUT(hp, txn, txn_owned, response, cleanup);
 
   // 检查实体是否存在
   int exists = lmjcore_entity_exist(txn, set_ptr);
   if (exists != 1) {
-    if (auto_commit) {
-      lmjcore_txn_abort(txn);
-    }
-    cJSON_Delete(body);
-    RETURN_ERROR_NOT_FOUND("Set", response);
+    rc = json_response_error(response, HTTP_STATUS_NOT_FOUND, "Set not found");
+    goto cleanup;
   }
 
   // 编码值
   size_t encoded_size = 1 + LMJCORE_PTR_LEN + value_len + 16;
-  uint8_t *encoded_value = (uint8_t *)malloc(encoded_size);
+  encoded_value = (uint8_t *)malloc(encoded_size);
   if (!encoded_value) {
-    if (auto_commit) {
-      lmjcore_txn_abort(txn);
-    }
-    cJSON_Delete(body);
-    RETURN_ERROR_NO_MEMORY(response);
+    rc = json_response_error(response, HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                             "Failed to allocate memory");
+    goto cleanup;
   }
 
   size_t encoded_len = 0;
-  int rc = lmjcore_encode_value(value_str, value_len, type, encoded_value,
-                                encoded_size, &encoded_len);
-
+  rc = lmjcore_encode_value(value_str, value_len, type, encoded_value,
+                            encoded_size, &encoded_len);
   if (rc != LMJCORE_SUCCESS) {
-    if (auto_commit) {
-      lmjcore_txn_abort(txn);
-    }
-    free(encoded_value);
-    cJSON_Delete(body);
-    json_response_lmjcore_error(response, rc);
-    return -1;
+    rc = json_response_lmjcore_error(response, rc);
+    goto cleanup;
   }
 
   // 添加元素
   rc = lmjcore_set_add(txn, set_ptr, encoded_value, encoded_len);
-  free(encoded_value);
-
   if (rc == LMJCORE_ERROR_MEMBER_EXISTS) {
-    if (auto_commit) {
-      lmjcore_txn_abort(txn);
-    }
-    cJSON_Delete(body);
-    return json_response_error(response, HTTP_STATUS_CONFLICT,
-                               "Element already exists");
+    rc = json_response_error(response, HTTP_STATUS_CONFLICT,
+                             "Element already exists");
+    goto cleanup;
   }
-
   if (rc != LMJCORE_SUCCESS) {
-    if (auto_commit) {
-      lmjcore_txn_abort(txn);
-    }
-    cJSON_Delete(body);
-    json_response_lmjcore_error(response, rc);
-    return -1;
+    rc = json_response_lmjcore_error(response, rc);
+    goto cleanup;
   }
 
-  // 提交事务（仅当自动管理时）
-  if (auto_commit) {
-    rc = lmjcore_txn_commit(txn);
-    if (rc != LMJCORE_SUCCESS) {
-      lmjcore_txn_abort(txn);
-      cJSON_Delete(body);
-      RETURN_ERROR_TXN_FAILED("commit", response);
-    }
-  }
+  TXN_COMMIT(txn, txn_owned, response, cleanup);
 
+  rc = json_response_success(response, HTTP_STATUS_OK);
+
+cleanup:
+  TXN_ABORT(txn, txn_owned);
+  free(encoded_value);
   cJSON_Delete(body);
-  return json_response_success(response, HTTP_STATUS_OK);
+  return rc;
 }
 
 int handle_set_remove(void *params, void *cbdata) {
@@ -337,7 +272,13 @@ int handle_set_remove(void *params, void *cbdata) {
   }
 
   // 解析请求体：{"value": string, "type": "raw"|"ref"|"null"}
-  cJSON *body = cJSON_Parse(hp->body);
+  cJSON *body = NULL;
+  lmjcore_txn *txn = NULL;
+  int txn_owned = 0;
+  int rc = -1;
+  uint8_t *encoded_value = NULL;
+
+  body = cJSON_Parse(hp->body);
   if (!body) {
     RETURN_ERROR_BODY_PARSE(response);
   }
@@ -347,99 +288,63 @@ int handle_set_remove(void *params, void *cbdata) {
   int type = LMJCORE_VALUE_TYPE_RAW;
   if (handle_parse_typed_value(body, &value_str, &value_len, &type) !=
       LMJCORE_SUCCESS) {
-    cJSON_Delete(body);
-    return json_response_error(response, HTTP_STATUS_BAD_REQUEST,
-                               "Request body must be {\"value\": string, "
-                               "\"type\": \"raw\"|\"ref\"|\"null\"}");
+    rc = json_response_error(response, HTTP_STATUS_BAD_REQUEST,
+                             "Request body must be {\"value\": string, "
+                             "\"type\": \"raw\"|\"ref\"|\"null\"}");
+    goto cleanup;
   }
 
   // 转换指针
   lmjcore_ptr set_ptr;
   if (lmjcore_ptr_from_string(ptr_str, set_ptr) != LMJCORE_SUCCESS) {
-    cJSON_Delete(body);
-    RETURN_ERROR_INVALID_PTR(response);
+    rc = json_response_error(response, HTTP_STATUS_BAD_REQUEST,
+                             "Invalid pointer format");
+    goto cleanup;
   }
 
-  // 检查是否已有事务（批量操作场景）
-  lmjcore_txn *txn = NULL;
-  int auto_commit = 1;  // 是否自动提交事务
-
-  if (hp->txn && !hp->auto_manage_txn) {
-    // 使用已有事务（批量操作场景）
-    txn = hp->txn;
-    auto_commit = 0;
-  } else {
-    // 开启写事务
-    int rc = lmjcore_txn_begin(hp->env, NULL, 0, &txn);
-    if (rc != LMJCORE_SUCCESS || !txn) {
-      cJSON_Delete(body);
-      RETURN_ERROR_TXN_FAILED("begin", response);
-    }
-  }
-
-  // 检查事务超时
-  CHECK_TXN_TIMEOUT(hp, response, txn);
+  TXN_BEGIN(txn, hp, 0, txn_owned, response, cleanup);
+  TXN_CHECK_TIMEOUT(hp, txn, txn_owned, response, cleanup);
 
   // 检查实体是否存在
   int exists = lmjcore_entity_exist(txn, set_ptr);
   if (exists != 1) {
-    if (auto_commit) {
-      lmjcore_txn_abort(txn);
-    }
-    cJSON_Delete(body);
-    RETURN_ERROR_NOT_FOUND("Set", response);
+    rc = json_response_error(response, HTTP_STATUS_NOT_FOUND, "Set not found");
+    goto cleanup;
   }
 
   // 编码值
   size_t encoded_size = 1 + LMJCORE_PTR_LEN + value_len + 16;
-  uint8_t *encoded_value = (uint8_t *)malloc(encoded_size);
+  encoded_value = (uint8_t *)malloc(encoded_size);
   if (!encoded_value) {
-    if (auto_commit) {
-      lmjcore_txn_abort(txn);
-    }
-    cJSON_Delete(body);
-    RETURN_ERROR_NO_MEMORY(response);
+    rc = json_response_error(response, HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                             "Failed to allocate memory");
+    goto cleanup;
   }
 
   size_t encoded_len = 0;
-  int rc = lmjcore_encode_value(value_str, value_len, type, encoded_value,
-                                encoded_size, &encoded_len);
-
+  rc = lmjcore_encode_value(value_str, value_len, type, encoded_value,
+                            encoded_size, &encoded_len);
   if (rc != LMJCORE_SUCCESS) {
-    if (auto_commit) {
-      lmjcore_txn_abort(txn);
-    }
-    free(encoded_value);
-    cJSON_Delete(body);
-    json_response_lmjcore_error(response, rc);
-    return -1;
+    rc = json_response_lmjcore_error(response, rc);
+    goto cleanup;
   }
 
   // 删除元素
   rc = lmjcore_set_remove(txn, set_ptr, encoded_value, encoded_len);
-  free(encoded_value);
-
   if (rc != LMJCORE_SUCCESS) {
-    if (auto_commit) {
-      lmjcore_txn_abort(txn);
-    }
-    cJSON_Delete(body);
-    json_response_lmjcore_error(response, rc);
-    return -1;
+    rc = json_response_lmjcore_error(response, rc);
+    goto cleanup;
   }
 
-  // 提交事务（仅当自动管理时）
-  if (auto_commit) {
-    rc = lmjcore_txn_commit(txn);
-    if (rc != LMJCORE_SUCCESS) {
-      lmjcore_txn_abort(txn);
-      cJSON_Delete(body);
-      RETURN_ERROR_TXN_FAILED("commit", response);
-    }
-  }
+  TXN_COMMIT(txn, txn_owned, response, cleanup);
 
+  rc = json_response_success(response, HTTP_STATUS_OK);
+
+cleanup:
+  TXN_ABORT(txn, txn_owned);
+  free(encoded_value);
   cJSON_Delete(body);
-  return json_response_success(response, HTTP_STATUS_OK);
+  return rc;
 }
 
 int handle_set_del(void *params, void *cbdata) {
@@ -462,54 +367,34 @@ int handle_set_del(void *params, void *cbdata) {
     RETURN_ERROR_INVALID_PTR(response);
   }
 
-  // 检查是否已有事务（批量操作场景）
   lmjcore_txn *txn = NULL;
-  int auto_commit = 1;  // 是否自动提交事务
+  int txn_owned = 0;
+  int rc = -1;
 
-  if (hp->txn && !hp->auto_manage_txn) {
-    // 使用已有事务（批量操作场景）
-    txn = hp->txn;
-    auto_commit = 0;
-  } else {
-    // 开启写事务
-    int rc = lmjcore_txn_begin(hp->env, NULL, 0, &txn);
-    if (rc != LMJCORE_SUCCESS || !txn) {
-      RETURN_ERROR_TXN_FAILED("begin", response);
-    }
-  }
-
-  // 检查事务超时
-  CHECK_TXN_TIMEOUT(hp, response, txn);
+  TXN_BEGIN(txn, hp, 0, txn_owned, response, cleanup);
+  TXN_CHECK_TIMEOUT(hp, txn, txn_owned, response, cleanup);
 
   // 检查实体是否存在
   int exists = lmjcore_entity_exist(txn, set_ptr);
   if (exists != 1) {
-    if (auto_commit) {
-      lmjcore_txn_abort(txn);
-    }
-    RETURN_ERROR_NOT_FOUND("Set", response);
+    rc = json_response_error(response, HTTP_STATUS_NOT_FOUND, "Set not found");
+    goto cleanup;
   }
 
   // 删除集合
-  int rc = lmjcore_set_del(txn, set_ptr);
+  rc = lmjcore_set_del(txn, set_ptr);
   if (rc != LMJCORE_SUCCESS) {
-    if (auto_commit) {
-      lmjcore_txn_abort(txn);
-    }
-    json_response_lmjcore_error(response, rc);
-    return -1;
+    rc = json_response_lmjcore_error(response, rc);
+    goto cleanup;
   }
 
-  // 提交事务（仅当自动管理时）
-  if (auto_commit) {
-    rc = lmjcore_txn_commit(txn);
-    if (rc != LMJCORE_SUCCESS) {
-      lmjcore_txn_abort(txn);
-      RETURN_ERROR_TXN_FAILED("commit", response);
-    }
-  }
+  TXN_COMMIT(txn, txn_owned, response, cleanup);
 
-  return json_response_success(response, HTTP_STATUS_OK);
+  rc = json_response_success(response, HTTP_STATUS_OK);
+
+cleanup:
+  TXN_ABORT(txn, txn_owned);
+  return rc;
 }
 
 // ==================== 集合初始化处理器（原子创建 + 嵌套元素） ====================
@@ -545,43 +430,26 @@ int handle_set_init(void *params, void *cbdata) {
                                "Invalid JSON in request body");
   }
 
+  lmjcore_txn *txn = NULL;
+  int txn_owned = 0;
+  int rc = -1;
+
   if (!cJSON_IsArray(root)) {
-    cJSON_Delete(root);
-    return json_response_error(
+    rc = json_response_error(
         response, HTTP_STATUS_BAD_REQUEST,
         "Request body must be a JSON array (element list)");
+    goto cleanup;
   }
 
-  // 检查是否已有事务（批量操作场景）
-  lmjcore_txn *txn = NULL;
-  int auto_commit = 1;  // 是否自动提交事务
-
-  if (hp->txn && !hp->auto_manage_txn) {
-    // 使用已有事务（批量操作场景），回滚由调用方负责
-    txn = hp->txn;
-    auto_commit = 0;
-  } else {
-    // 开启写事务
-    int rc = lmjcore_txn_begin(hp->env, NULL, 0, &txn);
-    if (rc != LMJCORE_SUCCESS || !txn) {
-      cJSON_Delete(root);
-      RETURN_ERROR_TXN_FAILED("begin", response);
-    }
-  }
-
-  // 检查事务超时
-  CHECK_TXN_TIMEOUT(hp, response, txn);
+  TXN_BEGIN(txn, hp, 0, txn_owned, response, cleanup);
+  TXN_CHECK_TIMEOUT(hp, txn, txn_owned, response, cleanup);
 
   // 1. 创建根集合
   lmjcore_ptr set_ptr;
-  int rc = lmjcore_set_create(txn, set_ptr);
+  rc = lmjcore_set_create(txn, set_ptr);
   if (rc != LMJCORE_SUCCESS) {
-    if (auto_commit) {
-      lmjcore_txn_abort(txn);
-    }
-    cJSON_Delete(root);
-    json_response_lmjcore_error(response, rc);
-    return -1;
+    rc = json_response_lmjcore_error(response, rc);
+    goto cleanup;
   }
 
   // 2. 逐个添加元素（值可为任意 JSON，嵌套对象/数组由工具自动创建）
@@ -596,12 +464,9 @@ int handle_set_init(void *params, void *cbdata) {
                                    &enc_len);
     if (rc != LMJCORE_SUCCESS) {
       snprintf(reason, sizeof(reason), "%s (in element [%d])", err, index);
-      if (auto_commit) {
-        lmjcore_txn_abort(txn);
-      }
-      cJSON_Delete(root);
-      return json_response_error(response, lmjcore_error_to_http_status(rc),
-                                 "%s", reason);
+      rc = json_response_error(response, lmjcore_error_to_http_status(rc),
+                               "%s", reason);
+      goto cleanup;
     }
 
     // 添加元素（重复元素自动去重，不报错）
@@ -613,12 +478,9 @@ int handle_set_init(void *params, void *cbdata) {
     if (rc != LMJCORE_SUCCESS) {
       snprintf(reason, sizeof(reason), "%s (in element [%d])",
                lmjcore_strerror(rc), index);
-      if (auto_commit) {
-        lmjcore_txn_abort(txn);
-      }
-      cJSON_Delete(root);
-      return json_response_error(response, lmjcore_error_to_http_status(rc),
-                                 "%s", reason);
+      rc = json_response_error(response, lmjcore_error_to_http_status(rc),
+                               "%s", reason);
+      goto cleanup;
     }
     index++;
   }
@@ -628,31 +490,22 @@ int handle_set_init(void *params, void *cbdata) {
   size_t total_value_len = 0;
   rc = lmjcore_set_stat(txn, set_ptr, &total_value_len, &distinct_count);
   if (rc != LMJCORE_SUCCESS) {
-    if (auto_commit) {
-      lmjcore_txn_abort(txn);
-    }
-    cJSON_Delete(root);
-    json_response_lmjcore_error(response, rc);
-    return -1;
+    rc = json_response_lmjcore_error(response, rc);
+    goto cleanup;
   }
 
-  // 4. 提交事务（仅当自动管理时）
-  if (auto_commit) {
-    rc = lmjcore_txn_commit(txn);
-    if (rc != LMJCORE_SUCCESS) {
-      lmjcore_txn_abort(txn);
-      cJSON_Delete(root);
-      RETURN_ERROR_TXN_FAILED("commit", response);
-    }
-  }
-
-  cJSON_Delete(root);
+  TXN_COMMIT(txn, txn_owned, response, cleanup);
 
   // 将指针转换为字符串并构建响应
   char ptr_str[LMJCORE_PTR_STRING_LEN + 1];
   lmjcore_ptr_to_string(set_ptr, ptr_str, sizeof(ptr_str));
 
-  return json_response_set(
+  rc = json_response_set(
       response, HTTP_STATUS_CREATED,
       json_new_counted_ptr(ptr_str, "element_count", distinct_count));
+
+cleanup:
+  TXN_ABORT(txn, txn_owned);
+  cJSON_Delete(root);
+  return rc;
 }

@@ -207,26 +207,27 @@ static int handle_batch_core(handle_params_t *hp, cJSON *root, int readonly,
     }
   }
 
-  // 开启事务
+  // 开启事务（hp->txn 为空时由本处理器创建并负责提交/回滚）
   lmjcore_txn *txn = NULL;
+  int txn_owned = 0;
   int txn_flags = readonly ? LMJCORE_TXN_READONLY : 0;
-  int rc = lmjcore_txn_begin(hp->env, NULL, txn_flags, &txn);
-  if (rc != LMJCORE_SUCCESS || !txn) {
-    cJSON_Delete(root);
-    RETURN_ERROR_TXN_FAILED("begin", response);
-  }
+  int rc = -1;
+  http_response_t *results = NULL;
+  cJSON *error = NULL;
+  cJSON *result_obj = NULL;
+
+  TXN_BEGIN(txn, hp, txn_flags, txn_owned, response, cleanup);
 
   // 更新 hp->txn 供子处理器使用
   hp->txn = txn;
   hp->auto_manage_txn = false;
 
   // 分配结果数组
-  http_response_t *results =
-      (http_response_t *)calloc((size_t)op_count, sizeof(http_response_t));
+  results = (http_response_t *)calloc((size_t)op_count, sizeof(http_response_t));
   if (!results) {
-    lmjcore_txn_abort(txn);
-    cJSON_Delete(root);
-    RETURN_ERROR_NO_MEMORY(response);
+    rc = json_response_error(response, HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                             "Failed to allocate memory");
+    goto cleanup;
   }
 
   // 执行所有操作
@@ -241,11 +242,9 @@ static int handle_batch_core(handle_params_t *hp, cJSON *root, int readonly,
 
     // 检查事务超时
     if (lmjcore_txn_check_timeout(hp->txn_start_time, hp->txn_timeout)) {
-      free_results(results, index);
-      free(results);
-      lmjcore_txn_abort(txn);
-      cJSON_Delete(root);
-      RETURN_ERROR_TXN_TIMEOUT(response);
+      rc = json_response_error(response, HTTP_STATUS_REQUEST_TIMEOUT,
+                               "Transaction timeout");
+      goto cleanup;
     }
 
     if (!cJSON_IsObject(item)) {
@@ -265,21 +264,13 @@ static int handle_batch_core(handle_params_t *hp, cJSON *root, int readonly,
 
   // 处理结果
   if (failed_index >= 0) {
-    // 回滚事务
-    lmjcore_txn_abort(txn);
-
-    // 释放之前成功的操作结果
-    free_results(results, failed_index);
-
     // 构建错误响应 {"success":false,"failed_at":N,"details":{...}}
-    cJSON *error = cJSON_CreateObject();
+    error = cJSON_CreateObject();
     if (!error || !cJSON_AddBoolToObject(error, "success", false) ||
         !cJSON_AddNumberToObject(error, "failed_at", failed_index)) {
-      cJSON_Delete(error);
-      free_results(results, op_count);
-      free(results);
-      cJSON_Delete(root);
-      RETURN_ERROR_NO_MEMORY(response);
+      rc = json_response_error(response, HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                               "Failed to allocate memory");
+      goto cleanup;
     }
 
     if (results[failed_index].json) {
@@ -290,46 +281,32 @@ static int handle_batch_core(handle_params_t *hp, cJSON *root, int readonly,
       }
     }
 
-    free_results(results, op_count);
-    free(results);
-    cJSON_Delete(root);
-
-    // 直接使用构建好的 JSON 文档作为响应体，避免二次转义
-    return json_response_set(response, HTTP_STATUS_BAD_REQUEST, error);
+    // cleanup 中回滚事务
+    rc = json_response_set(response, HTTP_STATUS_BAD_REQUEST, error);
+    error = NULL; // 所有权已转移给响应
+    goto cleanup;
   }
 
-  // 提交事务
+  // 只读事务直接结束；写事务提交
   if (readonly) {
-    lmjcore_txn_abort(txn);
+    TXN_ABORT(txn, txn_owned);
   } else {
-    rc = lmjcore_txn_commit(txn);
-    if (rc != LMJCORE_SUCCESS) {
-      lmjcore_txn_abort(txn);
-      free_results(results, op_count);
-      free(results);
-      cJSON_Delete(root);
-      return json_response_error(response, HTTP_STATUS_INTERNAL_SERVER_ERROR,
-                                 "Failed to commit transaction");
-    }
+    TXN_COMMIT(txn, txn_owned, response, cleanup);
   }
 
   // 构建成功响应 {"success":true,"results":[{"status":N,"body":{...}}...]}
-  cJSON *result_obj = cJSON_CreateObject();
+  result_obj = cJSON_CreateObject();
   if (!result_obj || !cJSON_AddBoolToObject(result_obj, "success", true)) {
-    cJSON_Delete(result_obj);
-    free_results(results, op_count);
-    free(results);
-    cJSON_Delete(root);
-    RETURN_ERROR_NO_MEMORY(response);
+    rc = json_response_error(response, HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                             "Failed to allocate memory");
+    goto cleanup;
   }
 
   cJSON *results_array = cJSON_AddArrayToObject(result_obj, "results");
   if (!results_array) {
-    cJSON_Delete(result_obj);
-    free_results(results, op_count);
-    free(results);
-    cJSON_Delete(root);
-    RETURN_ERROR_NO_MEMORY(response);
+    rc = json_response_error(response, HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                             "Failed to allocate memory");
+    goto cleanup;
   }
 
   for (int i = 0; i < op_count; i++) {
@@ -337,7 +314,9 @@ static int handle_batch_core(handle_params_t *hp, cJSON *root, int readonly,
     if (!result_item || !cJSON_AddNumberToObject(result_item, "status",
                                                  results[i].status_code)) {
       cJSON_Delete(result_item);
-      goto oom_success;
+      rc = json_response_error(response, HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                               "Failed to allocate memory");
+      goto cleanup;
     }
 
     cJSON *body_json = results[i].json;
@@ -346,29 +325,36 @@ static int handle_batch_core(handle_params_t *hp, cJSON *root, int readonly,
       if (!cJSON_AddItemToObject(result_item, "body", body_json)) {
         cJSON_Delete(body_json);
         cJSON_Delete(result_item);
-        goto oom_success;
+        rc = json_response_error(response, HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                                 "Failed to allocate memory");
+        goto cleanup;
       }
     } else if (!cJSON_AddNullToObject(result_item, "body")) {
       cJSON_Delete(result_item);
-      goto oom_success;
+      rc = json_response_error(response, HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                               "Failed to allocate memory");
+      goto cleanup;
     }
 
     if (!cJSON_AddItemToArray(results_array, result_item)) {
       cJSON_Delete(result_item);
-      goto oom_success;
+      rc = json_response_error(response, HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                               "Failed to allocate memory");
+      goto cleanup;
     }
   }
 
-  free(results);
-  cJSON_Delete(root);
-  return json_response_set(response, HTTP_STATUS_OK, result_obj);
+  rc = json_response_set(response, HTTP_STATUS_OK, result_obj);
+  result_obj = NULL; // 所有权已转移给响应
 
-oom_success:
-  cJSON_Delete(result_obj);
+cleanup:
+  TXN_ABORT(txn, txn_owned);
   free_results(results, op_count);
   free(results);
+  cJSON_Delete(error);
+  cJSON_Delete(result_obj);
   cJSON_Delete(root);
-  RETURN_ERROR_NO_MEMORY(response);
+  return rc;
 }
 
 // ==================== 公开处理器 ====================

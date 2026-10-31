@@ -101,41 +101,51 @@ int handle_obj_query(void *params, void *cbdata) {
 
   // 只读事务（批量操作时复用调用方的共享事务，保证同一 MVCC 快照）
   lmjcore_txn *txn = NULL;
-  int rc = handle_txn_begin(hp, &txn, LMJCORE_TXN_READONLY);
-  if (rc != LMJCORE_SUCCESS || !txn) {
-    RETURN_ERROR_TXN_FAILED("begin", response);
-  }
+  int txn_owned = 0;
+  int rc = -1;
+  char *value = NULL;
+  query_error_t err = {0};
+  cJSON *root = NULL;
 
-  // 检查事务超时
-  CHECK_TXN_TIMEOUT(hp, response, txn);
+  TXN_BEGIN(txn, hp, LMJCORE_TXN_READONLY, txn_owned, response, cleanup);
+  TXN_CHECK_TIMEOUT(hp, txn, txn_owned, response, cleanup);
 
   query_options_t options;
   size_t max_depth = (hp->query_max_depth > 0) ? (size_t)hp->query_max_depth : 0;
   query_options_init(&options, max_depth, hp->max_value_bytes);
 
-  char *value = NULL;
   api_value_type_t type = VALUE_TYPE_NULL;
-  query_error_t err = {0};
-  rc = query_path_execute(txn, path_str, &options, &value, &type, &err);
-
-  // 只读事务结束（共享事务由调用方统一管理）
-  handle_txn_end(hp, txn, false);
-
-  if (rc != LMJCORE_SUCCESS) {
-    cJSON *root = build_query_error(rc, &err, options.max_value_bytes);
-    query_error_free(&err);
+  int query_rc =
+      query_path_execute(txn, path_str, &options, &value, &type, &err);
+  if (query_rc != LMJCORE_SUCCESS) {
+    root = build_query_error(query_rc, &err, options.max_value_bytes);
     if (!root) {
-      RETURN_ERROR_NO_MEMORY(response);
+      rc = json_response_error(response, HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                               "Failed to allocate memory");
+      goto cleanup;
     }
-    json_response_set(response, lmjcore_error_to_http_status(rc), root);
-    return -1;
+    rc = json_response_set(response, lmjcore_error_to_http_status(query_rc),
+                           root);
+    root = NULL; // 所有权已转移给响应
+    goto cleanup;
   }
 
   // 成功：{"path":"<原路径>","value":"...","type":"..."}
-  cJSON *root = json_new_value_entry("path", path_str, value,
-                                     value_type_to_string(type));
+  root = json_new_value_entry("path", path_str, value,
+                              value_type_to_string(type));
+  if (!root) {
+    rc = json_response_error(response, HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                             "Failed to allocate memory");
+    goto cleanup;
+  }
+
+  rc = json_response_set(response, HTTP_STATUS_OK, root);
+  root = NULL; // 所有权已转移给响应
+
+cleanup:
+  TXN_ABORT(txn, txn_owned);
   free(value);
   query_error_free(&err);
-
-  return json_response_set(response, HTTP_STATUS_OK, root);
+  cJSON_Delete(root);
+  return rc;
 }

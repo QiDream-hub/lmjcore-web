@@ -36,7 +36,7 @@ int lmjcore_nested_member_name_check(const char *name, size_t name_len,
  *   - JSON number -> raw（按其 JSON 数字文本存储，如 21 -> "21"）
  *   - JSON true/false -> raw（"true"/"false"）
  *
- * 空对象/空数组允许（引擎会保留实体占位记录，可后续再填充）。
+ * 空对象/空数组允许（填入空实体的指针）。
  * 任一子节点失败时，整个事务内已创建的嵌套实体均随事务回滚；
  * err_buf 会写出从调用位置到失败点的路径链（如 "member 'ip': element [0]: member 'x': ..."）。
  *

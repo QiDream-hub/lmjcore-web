@@ -34,37 +34,36 @@ int handle_ptr_exist(void *params, void *cbdata) {
 
   // 开启读事务（批量操作时复用调用方的共享事务）
   lmjcore_txn *txn = NULL;
-  int rc = handle_txn_begin(hp, &txn, LMJCORE_TXN_READONLY);
-  if (rc != LMJCORE_SUCCESS || !txn) {
-    RETURN_ERROR_TXN_FAILED("begin", response);
-  }
+  int txn_owned = 0;
+  int rc = -1;
+  cJSON *root = NULL;
 
-  // 检查事务超时
-  CHECK_TXN_TIMEOUT(hp, response, txn);
+  TXN_BEGIN(txn, hp, LMJCORE_TXN_READONLY, txn_owned, response, cleanup);
+  TXN_CHECK_TIMEOUT(hp, txn, txn_owned, response, cleanup);
 
   // 检查实体是否存在
   int exists = lmjcore_entity_exist(txn, ptr);
-
-  // 只读事务结束（共享事务由调用方统一管理）
-  handle_txn_end(hp, txn, false);
-
   if (exists < 0) {
-    json_response_lmjcore_error(response, exists);
-    return -1;
+    rc = json_response_lmjcore_error(response, exists);
+    goto cleanup;
   }
 
   if (exists == 0) {
-    return json_response_set(response, HTTP_STATUS_OK,
-                             json_new_exist(false, NULL));
+    root = json_new_exist(false, NULL);
+  } else {
+    // 通过指针首字节判断实体类型
+    lmjcore_entity_type etype = (lmjcore_entity_type)ptr[0];
+    const char *type_str = (etype == LMJCORE_OBJ) ? "object" : "set";
+    root = json_new_exist(true, type_str);
   }
 
-  // 检查实体类型
-  // 通过指针首字节判断
-  lmjcore_entity_type etype = (lmjcore_entity_type)ptr[0];
-  const char *type_str = (etype == LMJCORE_OBJ) ? "object" : "set";
+  rc = json_response_set(response, HTTP_STATUS_OK, root);
+  root = NULL; // 所有权已转移给响应
 
-  return json_response_set(response, HTTP_STATUS_OK,
-                           json_new_exist(true, type_str));
+cleanup:
+  TXN_ABORT(txn, txn_owned);
+  cJSON_Delete(root);
+  return rc;
 }
 
 int handle_health(void *params, void *cbdata) {

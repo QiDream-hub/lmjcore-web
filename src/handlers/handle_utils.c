@@ -36,56 +36,6 @@ const char *route_params_get(route_params_t *params, size_t index) {
   return param_bufs[buf_index];
 }
 
-// ==================== 事务管理辅助函数 ====================
-
-/**
- * @brief 根据参数开启事务（支持外部传入或自动创建）
- * @param hp 处理器参数
- * @param txn_out 输出事务指针
- * @param flags 事务标志
- * @return LMJCORE_SUCCESS 成功，否则失败
- */
-int handle_txn_begin(handle_params_t *hp, lmjcore_txn **txn_out, int flags) {
-  if (!hp || !txn_out) {
-    return LMJCORE_ERROR_NULL_POINTER;
-  }
-
-  // 如果已有外部事务，直接使用
-  if (hp->txn) {
-    *txn_out = hp->txn;
-    return LMJCORE_SUCCESS;
-  }
-
-  // 否则创建新事务
-  int rc = lmjcore_txn_begin(hp->env, NULL, flags, txn_out);
-  return rc;
-}
-
-/**
- * @brief 根据参数提交/回滚事务（仅当自动管理时）
- * @param hp 处理器参数
- * @param txn 事务指针
- * @param success 是否成功
- * @return LMJCORE_SUCCESS 成功，否则失败
- */
-int handle_txn_end(handle_params_t *hp, lmjcore_txn *txn, int success) {
-  if (!hp || !txn) {
-    return LMJCORE_ERROR_NULL_POINTER;
-  }
-
-  // 如果是外部事务，不自动管理
-  if (hp->txn) {
-    return LMJCORE_SUCCESS;
-  }
-
-  // 自动管理事务
-  if (success) {
-    return lmjcore_txn_commit(txn);
-  } else {
-    return lmjcore_txn_abort(txn);
-  }
-}
-
 // ==================== 指针转换工具 ====================
 
 int lmjcore_ptr_from_hex(const char *str, uint8_t *ptr_out) {

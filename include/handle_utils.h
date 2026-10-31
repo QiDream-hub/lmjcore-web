@@ -3,6 +3,7 @@
 #define HANDLE_UTILS_H
 
 #include "cJSON.h"
+#include "json_response.h"
 #include "lmjcore.h"
 #include "router.h"
 #include <stdbool.h>
@@ -25,52 +26,65 @@ typedef enum {
   VALUE_TYPE_OBJECT = 4
 } api_value_type_t;
 
-// ==================== 事务管理宏（统一在此定义） ====================
+// ==================== 事务管理宏（统一入口） ====================
+//
+// 约定：
+//   - hp->txn 非空表示复用调用方事务（batch），txn_owned=0，处理器不提交/回滚；
+//   - 处理器自行开启的事务 txn_owned=1，由 TXN_COMMIT 提交或由此回滚；
+//   - 失败路径统一设置错误响应并跳转到 cleanup_label，因此每个使用这些宏的
+//     处理器都必须提供唯一的 cleanup 标签；
+//   - 在 cleanup 中调用 TXN_ABORT 作为兜底（幂等：提交/回滚后 txn_owned 清零）。
 
-/**
- * @brief 自动或手动管理事务
- * 如果 hp->txn 已设置，则使用外部事务（不自动提交/回滚）
- * 否则创建新事务并自动管理
- */
-#define TXN_BEGIN(txn, hp, flags, response, cleanup_label)                    \
-  do {                                                                        \
-    if ((hp)->txn) {                                                          \
-      txn = (hp)->txn;                                                        \
-    } else {                                                                  \
-      int rc = lmjcore_txn_begin((hp)->env, NULL, flags, &txn);               \
-      if (rc != LMJCORE_SUCCESS || !txn) {                                    \
-        RETURN_ERROR_TXN_FAILED("begin", response);                           \
-      }                                                                       \
-    }                                                                         \
+/** @brief 开始事务：复用外部事务或新建，失败时写 500 并跳转 cleanup */
+#define TXN_BEGIN(txn, hp, flags, txn_owned, response, cleanup_label)          \
+  do {                                                                         \
+    if ((hp)->txn) {                                                           \
+      (txn) = (hp)->txn;                                                       \
+      (txn_owned) = 0;                                                         \
+    } else {                                                                   \
+      int _txn_rc = lmjcore_txn_begin((hp)->env, NULL, (flags), &(txn));       \
+      if (_txn_rc != LMJCORE_SUCCESS || !(txn)) {                              \
+        json_response_error((response), HTTP_STATUS_INTERNAL_SERVER_ERROR,     \
+                            "Failed to begin transaction");                    \
+        goto cleanup_label;                                                    \
+      }                                                                        \
+      (txn_owned) = 1;                                                         \
+    }                                                                          \
   } while (0)
 
-#define TXN_COMMIT(txn, hp, response, cleanup_label)                          \
-  do {                                                                        \
-    if (!(hp)->txn) {                                                         \
-      int rc = lmjcore_txn_commit(txn);                                       \
-      if (rc != LMJCORE_SUCCESS) {                                            \
-        lmjcore_txn_abort(txn);                                               \
-        goto cleanup_label;                                                   \
-      }                                                                       \
-    }                                                                         \
+/** @brief 提交事务（仅自有事务），失败时回滚、写 500 并跳转 cleanup */
+#define TXN_COMMIT(txn, txn_owned, response, cleanup_label)                    \
+  do {                                                                         \
+    if (txn_owned) {                                                           \
+      int _txn_rc = lmjcore_txn_commit(txn);                                   \
+      (txn_owned) = 0;                                                         \
+      if (_txn_rc != LMJCORE_SUCCESS) {                                        \
+        lmjcore_txn_abort(txn);                                                \
+        json_response_error((response), HTTP_STATUS_INTERNAL_SERVER_ERROR,     \
+                            "Failed to commit transaction");                   \
+        goto cleanup_label;                                                    \
+      }                                                                        \
+    }                                                                          \
   } while (0)
 
-#define TXN_ABORT(txn, hp)                                                    \
-  do {                                                                        \
-    if (!(hp)->txn) {                                                         \
-      lmjcore_txn_abort(txn);                                                 \
-    }                                                                         \
+/** @brief 回滚事务（仅自有事务，幂等） */
+#define TXN_ABORT(txn, txn_owned)                                              \
+  do {                                                                         \
+    if ((txn_owned) && (txn)) {                                                \
+      lmjcore_txn_abort(txn);                                                  \
+      (txn_owned) = 0;                                                         \
+    }                                                                          \
   } while (0)
 
-/**
- * @brief 检查事务超时
- */
-#define CHECK_TXN_TIMEOUT(hp, response, txn)                                 \
-  do {                                                                       \
-    if (lmjcore_txn_check_timeout((hp)->txn_start_time, (hp)->txn_timeout)) {\
-      if (txn) lmjcore_txn_abort(txn);                                       \
-      RETURN_ERROR_TXN_TIMEOUT(response);                                    \
-    }                                                                        \
+/** @brief 检查事务超时：超时回滚、写 408 并跳转 cleanup */
+#define TXN_CHECK_TIMEOUT(hp, txn, txn_owned, response, cleanup_label)         \
+  do {                                                                         \
+    if (lmjcore_txn_check_timeout((hp)->txn_start_time, (hp)->txn_timeout)) {  \
+      TXN_ABORT(txn, txn_owned);                                               \
+      json_response_error((response), HTTP_STATUS_REQUEST_TIMEOUT,             \
+                          "Transaction timeout");                              \
+      goto cleanup_label;                                                      \
+    }                                                                          \
   } while (0)
 
 // ==================== 处理器参数 ====================
@@ -231,25 +245,5 @@ time_t lmjcore_txn_get_start_time(void);
  */
 int url_decode(const char *src, size_t src_len, char *out_buf,
                size_t out_buf_size);
-
-/**
- * @brief 事务管理：开启事务（支持外部传入或自动创建）
- *
- * @param hp 处理器参数
- * @param txn_out 输出事务指针
- * @param flags 事务标志（如 LMJCORE_TXN_READONLY）
- * @return LMJCORE_SUCCESS 成功，否则失败
- */
-int handle_txn_begin(handle_params_t *hp, lmjcore_txn **txn_out, int flags);
-
-/**
- * @brief 事务管理：提交/回滚事务（仅当自动管理时）
- *
- * @param hp 处理器参数
- * @param txn 事务指针
- * @param success 是否成功
- * @return LMJCORE_SUCCESS 成功，否则失败
- */
-int handle_txn_end(handle_params_t *hp, lmjcore_txn *txn, int success);
 
 #endif // HANDLE_UTILS_H

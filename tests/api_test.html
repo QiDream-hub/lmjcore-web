@@ -498,8 +498,8 @@
                 </p>
                 <div style="background: #fff3cd; border: 1px solid #ffc107; padding: 10px 15px; border-radius: 4px; margin-bottom: 15px; font-size: 13px;">
                     <strong>⚠️ 注意事项:</strong><br>
-                    • 不支持别名（alias）功能，每个操作必须指定完整的指针路径<br>
-                    • 如需引用新创建的对象，需分两步：先创建获取指针，再使用指针执行批量操作<br>
+                    • 可通过 <code>vars</code> 引用本次批量中已执行操作的结果（如新创建对象的指针），token 会在本操作的 path/body 中被替换<br>
+                    • <code>vars</code> 只作用于声明它的操作，引用索引从 0 开始且只能指向已执行的操作<br>
                     • 所有操作在同一事务内执行，失败则全部回滚
                 </div>
             </div>
@@ -527,12 +527,14 @@
                         <strong>操作格式说明:</strong><br>
                         • <code>method</code>: HTTP 方法 (GET, POST, PUT, DELETE)<br>
                         • <code>path</code>: 完整路径，如 <code>/obj</code>, <code>/obj/{ptr}</code>, <code>/obj/{ptr}/{member}</code>, <code>/set/{ptr}</code>, <code>/set/{ptr}/elements</code><br>
-                        • <code>body</code>: 可选，仅 PUT/POST 需要，格式 <code>{"value": "..."}</code>
+                        • <code>body</code>: 可选，仅 PUT/POST 需要，格式 <code>{"value": "..."}</code><br>
+                        • <code>vars</code>: 可选，<code>{"token": "{N:key}"}</code>，用已执行操作结果的 body 字段替换本操作中的 token
                     </div>
                 </div>
                 <div class="btn-group">
                     <button class="btn btn-primary" onclick="executeBatch()">执行批量操作</button>
                     <button class="btn btn-secondary" onclick="fillBatchExample()">填充示例</button>
+                    <button class="btn btn-secondary" onclick="fillBatchVarsExample()">填充 vars 示例</button>
                 </div>
                 <div class="response-box" id="batchResponse" style="display: none;"></div>
             </div>
@@ -938,6 +940,29 @@
                 {
                     "method": "GET",
                     "path": `/obj/${ptr}`
+                }
+            ], null, 2);
+            document.getElementById('batchOperations').value = example;
+        }
+
+        // 填充 vars 示例：同一批次内创建对象并引用其指针
+        function fillBatchVarsExample() {
+            const example = JSON.stringify([
+                {
+                    "method": "POST",
+                    "path": "/obj/init",
+                    "body": {"name": "Alice"}
+                },
+                {
+                    "method": "PUT",
+                    "path": "/obj/ref/age",
+                    "body": {"value": "30", "type": "raw"},
+                    "vars": {"ref": "{0:ptr}"}
+                },
+                {
+                    "method": "GET",
+                    "path": "/obj/ref",
+                    "vars": {"ref": "{0:ptr}"}
                 }
             ], null, 2);
             document.getElementById('batchOperations').value = example;

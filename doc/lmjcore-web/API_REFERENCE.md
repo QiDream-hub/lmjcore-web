@@ -207,6 +207,7 @@ Content-Type: application/json
 | `method` | string | HTTP 方法：`GET`、`PUT`、`POST`、`DELETE` |
 | `path` | string | 完整路径，如 `/obj/{ptr}`、`/obj/{ptr}/{member}`、`/set/{ptr}` |
 | `body` | object/array | 可选，原样透传给目标端点。`PUT` / `DELETE` 需为 `{"value": "...", "type": "raw"\|"ref"\|"null"}`；`POST /obj/init`、`POST /set/init` 可传任意 JSON |
+| `vars` | object | 可选，本次操作的字符串替换表：`{"token": "{N:key}"}`。仅作用于声明它的操作 |
 
 **成功响应（GET /batch 和 POST /batch 相同）**
 ```http
@@ -268,6 +269,27 @@ Content-Type: application/json
 - `status` 字段为该操作的 HTTP 状态码
 - `body` 字段为该操作的响应体（自动解析为 JSON 对象或保留为字符串）
 
+**变量替换（vars）**
+
+每个操作可选 `vars` 属性，用于引用本次批量中**已执行**操作的结果：
+
+```json
+{"token": "{N:key}"}
+```
+
+| 部分 | 说明 |
+|------|------|
+| `token` | 用户自定义的替换令牌，不能与 path/body 中的其他文本冲突 |
+| `N` | 被引用操作的索引（从 0 开始），必须小于当前操作索引 |
+| `key` | 该操作响应体（`body`）的顶层字段名 |
+
+规则：
+- 替换范围为本操作的 `path` 和 `body` 中所有字符串值（递归包含嵌套对象/数组），不替换 body 的键
+- 纯文本单遍替换，非级联：替换值中即使包含其他 token 也不会再次展开；多个 token 重叠时按“最早位置 + 最长匹配”处理
+- 字段值为字符串时直接使用，为数字时转为文本；布尔、null、数组、对象会报错
+- `path` 中的替换值原样注入（指针为十六进制字符，无需转义）
+- 任一环节失败（格式非法、引用未执行的操作、字段缺失、值类型不支持）都会使该操作失败：返回 `failed_at` 并回滚整个事务
+
 **使用示例**
 
 示例 1：批量设置对象属性
@@ -292,19 +314,40 @@ Content-Type: application/json
 }
 ```
 
-示例 2：创建对象后批量设置（需要客户端先获取指针）
-```bash
-# 步骤 1：创建对象，获取指针
-curl -X POST http://localhost:8080/obj
-# 返回：{"ptr": "01abc123def456789012345678901234"}
+示例 2：创建对象并在同一批次中设置属性（使用 `vars` 引用新指针）
+```json
+{
+  "operations": [
+    {
+      "method": "POST",
+      "path": "/obj/init",
+      "body": {"name": "Alice"}
+    },
+    {
+      "method": "PUT",
+      "path": "/obj/ptr/age",
+      "body": {"value": "30", "type": "raw"},
+      "vars": {"ptr": "{0:ptr}"}
+    },
+    {
+      "method": "GET",
+      "path": "/obj/ptr",
+      "vars": {"ptr": "{0:ptr}"}
+    }
+  ]
+}
+```
 
-# 步骤 2：使用指针批量设置属性
+```bash
 curl -X POST http://localhost:8080/batch \
   -H "Content-Type: application/json" \
   -d '{
     "operations": [
-      {"method": "PUT", "path": "/obj/01abc123.../name", "body": {"value": "Alice", "type": "raw"}},
-      {"method": "PUT", "path": "/obj/01abc123.../age", "body": {"value": "30", "type": "raw"}}
+      {"method": "POST", "path": "/obj/init", "body": {"name": "Alice"}},
+      {"method": "PUT", "path": "/obj/ptr/age",
+       "body": {"value": "30", "type": "raw"},
+       "vars": {"ptr": "{0:ptr}"}},
+      {"method": "GET", "path": "/obj/ptr", "vars": {"ptr": "{0:ptr}"}}
     ]
   }'
 ```
@@ -333,8 +376,7 @@ curl -X GET http://localhost:8080/batch \
 ```
 
 **注意事项**
-- 批量操作**不支持别名引用**：每个操作的 `path` 必须使用完整的指针字符串
-- 如需在批量操作中引用新创建的对象指针，需分两步：先创建获取指针，再批量操作
+- 可通过 `vars` 引用本次批量中已执行操作的结果（如新创建对象的指针），无需分两次请求
 - 失败时事务自动回滚，已执行的操作不会生效
 - `GET /batch` 仅允许 `GET` 操作，`POST /batch` 允许所有操作类型
 

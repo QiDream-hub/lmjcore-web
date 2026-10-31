@@ -7,6 +7,7 @@
 #include "lmjcore_handle.h"
 #include "router.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -37,6 +38,299 @@ static void free_results(http_response_t *results, int count) {
     cJSON_Delete(results[i].json);
     results[i].json = NULL;
   }
+}
+
+// ==================== vars 变量替换 ====================
+
+/** 单条变量绑定：token 在本次操作的 path/body 中被替换为 value */
+typedef struct {
+  const char *token; // 指向请求 JSON 中的键名（生命周期同 root）
+  size_t token_len;
+  char *value; // 已解析的替换值（由 resolve_vars 分配）
+} var_binding_t;
+
+/**
+ * @brief 解析引用表达式 "{N:key}"（N 为 0-based 操作下标）
+ * @return 0 成功，-1 格式非法
+ */
+static int parse_var_ref(const char *expr, long *out_index,
+                         const char **out_key, size_t *out_key_len) {
+  size_t len = expr ? strlen(expr) : 0;
+  if (len < 5 || expr[0] != '{' || expr[len - 1] != '}') {
+    return -1;
+  }
+
+  const char *colon = strchr(expr + 1, ':');
+  if (!colon || colon == expr + 1) {
+    return -1;
+  }
+
+  long index = 0;
+  for (const char *p = expr + 1; p < colon; p++) {
+    if (*p < '0' || *p > '9') {
+      return -1;
+    }
+    index = index * 10 + (*p - '0');
+    if (index > MAX_OPERATIONS) {
+      return -1;
+    }
+  }
+
+  const char *key = colon + 1;
+  size_t key_len = (size_t)((expr + len - 1) - key);
+  if (key_len == 0) {
+    return -1;
+  }
+
+  *out_index = index;
+  *out_key = key;
+  *out_key_len = key_len;
+  return 0;
+}
+
+/**
+ * @brief 在指定位置匹配最长 token，返回匹配长度（0 表示不匹配）
+ */
+static size_t match_binding(const char *src, size_t pos,
+                            const var_binding_t *bindings, size_t count,
+                            size_t *out_binding) {
+  size_t best_len = 0;
+  size_t best_index = 0;
+  for (size_t i = 0; i < count; i++) {
+    size_t len = bindings[i].token_len;
+    if (len > best_len && strncmp(src + pos, bindings[i].token, len) == 0) {
+      best_len = len;
+      best_index = i;
+    }
+  }
+  if (best_len > 0) {
+    *out_binding = best_index;
+  }
+  return best_len;
+}
+
+/**
+ * @brief 单遍替换（非级联）：按“最早位置 + 最长匹配”展开 token
+ * @return 新字符串（调用方释放），失败返回 NULL
+ */
+static char *substitute_string(const char *src, const var_binding_t *bindings,
+                               size_t count) {
+  size_t src_len = strlen(src);
+  size_t out_len = 0;
+
+  for (size_t pos = 0; pos < src_len;) {
+    size_t binding = 0;
+    size_t matched = match_binding(src, pos, bindings, count, &binding);
+    if (matched > 0) {
+      out_len += strlen(bindings[binding].value);
+      pos += matched;
+    } else {
+      out_len++;
+      pos++;
+    }
+  }
+
+  char *out = (char *)malloc(out_len + 1);
+  if (!out) {
+    return NULL;
+  }
+
+  size_t written = 0;
+  for (size_t pos = 0; pos < src_len;) {
+    size_t binding = 0;
+    size_t matched = match_binding(src, pos, bindings, count, &binding);
+    if (matched > 0) {
+      size_t value_len = strlen(bindings[binding].value);
+      memcpy(out + written, bindings[binding].value, value_len);
+      written += value_len;
+      pos += matched;
+    } else {
+      out[written++] = src[pos++];
+    }
+  }
+  out[written] = '\0';
+  return out;
+}
+
+/**
+ * @brief 递归替换 body 中所有字符串值（不替换对象键）
+ * @return 0 成功，-1 内存分配失败
+ */
+static int substitute_walk(cJSON *value, const var_binding_t *bindings,
+                           size_t count) {
+  if (cJSON_IsString(value)) {
+    char *replaced = substitute_string(value->valuestring, bindings, count);
+    if (!replaced) {
+      return -1;
+    }
+    free(value->valuestring);
+    value->valuestring = replaced;
+    return 0;
+  }
+
+  if (cJSON_IsObject(value) || cJSON_IsArray(value)) {
+    for (cJSON *child = value->child; child; child = child->next) {
+      if (substitute_walk(child, bindings, count) != 0) {
+        return -1;
+      }
+    }
+  }
+  return 0;
+}
+
+/**
+ * @brief 解析并应用单个操作的 vars
+ *
+ * vars 形如 {"token": "{N:key}"}：N 为已执行操作的 0-based 下标，key 为该
+ * 操作响应体（body）的顶层字段。token 在本操作 path 与 body 字符串值中被
+ * 替换为该字段的值。任一环节失败都视为该操作失败。
+ *
+ * @return 0 成功，-1 失败（result 中已写入错误响应）
+ */
+static int resolve_vars(cJSON *op, http_response_t *results, int index,
+                        http_response_t *result) {
+  cJSON *vars = cJSON_GetObjectItemCaseSensitive(op, "vars");
+  if (!vars) {
+    return 0;
+  }
+
+  if (!cJSON_IsObject(vars)) {
+    set_result_error(result, HTTP_STATUS_BAD_REQUEST,
+                     "Invalid 'vars' (must be a JSON object)");
+    return -1;
+  }
+
+  int binding_count = cJSON_GetArraySize(vars);
+  if (binding_count <= 0) {
+    return 0;
+  }
+
+  var_binding_t *bindings =
+      (var_binding_t *)calloc((size_t)binding_count, sizeof(*bindings));
+  if (!bindings) {
+    set_result_error(result, HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                     "Failed to allocate memory");
+    return -1;
+  }
+
+  int rc = 0;
+  int filled = 0;
+  char msg[1024];
+  cJSON *binding = NULL;
+
+  cJSON_ArrayForEach(binding, vars) {
+    const char *token = binding->string;
+    long ref_index = -1;
+    const char *key = NULL;
+    size_t key_len = 0;
+
+    if (!token || !*token || !cJSON_IsString(binding) ||
+        parse_var_ref(binding->valuestring, &ref_index, &key, &key_len) != 0) {
+      snprintf(msg, sizeof(msg),
+               "vars: invalid reference for token '%s' (expect \"{N:key}\")",
+               token ? token : "");
+      set_result_error(result, HTTP_STATUS_BAD_REQUEST, msg);
+      rc = -1;
+      goto cleanup;
+    }
+
+    if (ref_index >= (long)index) {
+      snprintf(msg, sizeof(msg),
+               "vars: operation %ld referenced by token '%s' has not been "
+               "executed",
+               ref_index, token);
+      set_result_error(result, HTTP_STATUS_BAD_REQUEST, msg);
+      rc = -1;
+      goto cleanup;
+    }
+
+    cJSON *ref_body = results[ref_index].json;
+    if (!ref_body || !cJSON_IsObject(ref_body)) {
+      snprintf(msg, sizeof(msg),
+               "vars: result of operation %ld has no body object", ref_index);
+      set_result_error(result, HTTP_STATUS_BAD_REQUEST, msg);
+      rc = -1;
+      goto cleanup;
+    }
+
+    char key_buf[512];
+    if (key_len >= sizeof(key_buf)) {
+      snprintf(msg, sizeof(msg),
+               "vars: reference key for token '%s' is too long", token);
+      set_result_error(result, HTTP_STATUS_BAD_REQUEST, msg);
+      rc = -1;
+      goto cleanup;
+    }
+    memcpy(key_buf, key, key_len);
+    key_buf[key_len] = '\0';
+
+    cJSON *ref_value = cJSON_GetObjectItemCaseSensitive(ref_body, key_buf);
+    if (!ref_value) {
+      snprintf(msg, sizeof(msg),
+               "vars: property '%.*s' not found in result of operation %ld",
+               (int)key_len, key, ref_index);
+      set_result_error(result, HTTP_STATUS_BAD_REQUEST, msg);
+      rc = -1;
+      goto cleanup;
+    }
+
+    char *value = NULL;
+    if (cJSON_IsString(ref_value)) {
+      value = strdup(ref_value->valuestring);
+    } else if (cJSON_IsNumber(ref_value)) {
+      value = cJSON_PrintUnformatted(ref_value);
+    }
+
+    if (!value) {
+      if (!cJSON_IsString(ref_value) && !cJSON_IsNumber(ref_value)) {
+        snprintf(msg, sizeof(msg),
+                 "vars: value of '{%ld:%.*s}' is not a string or number",
+                 ref_index, (int)key_len, key);
+        set_result_error(result, HTTP_STATUS_BAD_REQUEST, msg);
+      } else {
+        set_result_error(result, HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                         "Failed to allocate memory");
+      }
+      rc = -1;
+      goto cleanup;
+    }
+
+    bindings[filled].token = token;
+    bindings[filled].token_len = strlen(token);
+    bindings[filled].value = value;
+    filled++;
+  }
+
+  // 替换 path
+  cJSON *path_item = cJSON_GetObjectItemCaseSensitive(op, "path");
+  if (path_item && cJSON_IsString(path_item)) {
+    char *replaced =
+        substitute_string(path_item->valuestring, bindings, (size_t)filled);
+    if (!replaced) {
+      set_result_error(result, HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                       "Failed to allocate memory");
+      rc = -1;
+      goto cleanup;
+    }
+    free(path_item->valuestring);
+    path_item->valuestring = replaced;
+  }
+
+  // 替换 body（递归处理字符串值）
+  cJSON *body_item = cJSON_GetObjectItemCaseSensitive(op, "body");
+  if (body_item && substitute_walk(body_item, bindings, (size_t)filled) != 0) {
+    set_result_error(result, HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                     "Failed to allocate memory");
+    rc = -1;
+    goto cleanup;
+  }
+
+cleanup:
+  for (int i = 0; i < filled; i++) {
+    free(bindings[i].value);
+  }
+  free(bindings);
+  return rc;
 }
 
 // ==================== 解析操作并调用处理器 ====================
@@ -250,6 +544,12 @@ static int handle_batch_core(handle_params_t *hp, cJSON *root, int readonly,
     if (!cJSON_IsObject(item)) {
       set_result_error(&results[index], HTTP_STATUS_BAD_REQUEST,
                        "Invalid operation format");
+      failed_index = index;
+      break;
+    }
+
+    // 应用本操作的 vars：引用已执行操作的结果，替换 path/body 中的 token
+    if (resolve_vars(item, results, index, &results[index]) != 0) {
       failed_index = index;
       break;
     }
